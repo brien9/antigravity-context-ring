@@ -1,0 +1,20 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Dist
+dist/*.zip
+
+# OS
+.DS_Store
+Thumbs.db
+
+# AI Workflow & Review Artifacts
+.handoff/
+REVIEW_BUNDLE_*.md
+dist/REVIEW_BUNDLE_*.md
+
+# Promotional & marketing drafts
+docs/promo/
