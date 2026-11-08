@@ -71,15 +71,15 @@ During marathon autonomous coding sessions in Google Antigravity IDE, developers
 
 ## 🎨 Visual States & Split View Isolation
 
-### 1. Dual-Track Color Hierarchy
+### 1. Convergent Dual-Track Color Hierarchy
 
-The ring progresses smoothly with context usage. Standard conversations follow a four-tier palette (Electric Blue `<60%` ➔ Amber Yellow `60-80%` ➔ Warm Orange `80-90%` ➔ Alert Red `≥90%`). Once server-side auto-compaction is detected, the widget switches to an exclusive **violet compression track** (Indigo Violet ➔ Warm Magenta ➔ Rose Pink ➔ Deep Burgundy), visually memorializing the session lifecycle.
+The ring progresses smoothly with context usage. Standard conversations follow a four-tier palette (Electric Blue `<60%` ➔ Amber Yellow `60-80%` ➔ Warm Orange `80-90%` ➔ Pure Alert Red `≥90%`). Once context compaction is detected (manual `/compact` or auto-compaction), the safe phase (`<60%`) switches to a luminous **Lavender Violet (`#a78bfa`)** to signify a compacted session, while seamlessly converging into the standard Amber ➔ Orange ➔ Pure Red warning track at `≥60%`.
 
 | 🟢 Healthy / Early Phase (`< 60%`) | 🟡 Transition / Moderate (`60% ~ 80%`) |
 | :---: | :---: |
-| <img src="assets/state-low.png" alt="Google Antigravity context usage low state (<60%) - native blue inline SVG ring" width="380"><br><sub>**Native Electric Blue**: Silent companion; fresh drafts with no messages display semi-transparent `0.0K`</sub> | <img src="assets/state-medium.png" alt="Google Antigravity context usage medium state (60-80%) - amber warning ring" width="380"><br><sub>**Warm Amber**: Signals session entering deeper context; monitor per-turn token payload</sub> |
-| 🔴 Critical Threshold (`≥ 90%`) | 🟣 Auto-Compaction Triggered (`Compacted`) |
-| <img src="assets/state-critical.png" alt="Google Antigravity context limit critical state (>=90%) - approaching 128K/256K auto-compaction truncation threshold" width="380"><br><sub>**Saturated Alert Red**: Approaching physical truncation threshold; wrap up or branch session</sub> | <img src="assets/state-compacted.png" alt="Google Antigravity auto-compaction triggered state - dual-track purple ring showing released context tokens" width="380"><br><sub>**Dual-Track Violet**: Identifies historical auto-compaction; HUD displays reclaimed token capacity</sub> |
+| <img src="assets/state-low.png" alt="Google Antigravity context usage low state (<60%) - native blue inline SVG ring" width="380"><br><sub>**Native Electric Blue (`#3b82f6`)**: Silent companion; fresh drafts with no messages display semi-transparent `0.0K`</sub> | <img src="assets/state-medium.png" alt="Google Antigravity context usage medium state (60-80%) - amber warning ring" width="380"><br><sub>**Warm Amber (`#f59e0b`)**: Signals session entering deeper context; monitor per-turn token payload</sub> |
+| 🔴 Critical Threshold (`≥ 90%`) | 🟣 Compaction Triggered (`Compacted < 60%`) |
+| <img src="assets/state-critical.png" alt="Google Antigravity context limit critical state (>=90%) - approaching 128K/256K auto-compaction truncation threshold" width="380"><br><sub>**Pure Alert Red (`#ff2626`)**: Approaching physical truncation threshold; wrap up or branch session</sub> | <img src="assets/state-compacted.png" alt="Google Antigravity auto-compaction triggered state - dual-track purple ring showing released context tokens" width="380"><br><sub>**Lavender Violet (`#a78bfa`)**: Identifies compacted history; HUD displays reclaimed token capacity</sub> |
 
 ### 2. Split View Multi-Pane Isolation
 

@@ -185,29 +185,17 @@ var __agRingCacheModule = (function() {
     }
   }
 
-  // 依据上下文占用比例与是否经历过历史压缩获取双轨制色标
+  // 依据上下文占用比例与是否经历过历史压缩获取收束汇流色标
   function getRingColor(ratio, isCompressed = false) {
     const r = (typeof ratio === 'number' && Number.isFinite(ratio)) ? ratio : 0;
-    if (isCompressed) {
-      if (r < 0.60) {
-        return '#8b5cf6'; // 0% ~ 60%: 科技靛紫（压缩安全期）
-      } else if (r < 0.80) {
-        return '#d946ef'; // 60% ~ 80%: 暖洋红（二次注意期）
-      } else if (r < 0.90) {
-        return '#f43f5e'; // 80% ~ 90%: 荧光玫红（二次警告期）
-      } else {
-        return '#9f1239'; // 90% ~ 100%+: 极危深绯紫（二次截断期）
-      }
-    }
-
     if (r < 0.60) {
-      return '#3b82f6'; // 0% ~ 60%: 原生蓝（安全期）
+      return isCompressed ? '#a78bfa' : '#3b82f6'; // 0% ~ 60%: 压缩态薰衣草亮紫 / 常规态原生科技蓝（安全期）
     } else if (r < 0.80) {
-      return '#f59e0b'; // 60% ~ 80%: 琥珀黄（注意期）
+      return '#f59e0b'; // 60% ~ 80%: 琥珀黄（注意期，双轨汇流）
     } else if (r < 0.90) {
-      return '#f97316'; // 80% ~ 90%: 暖橙红（警告期）
+      return '#f97316'; // 80% ~ 90%: 暖橙红（警告期，双轨汇流）
     } else {
-      return '#ef4444'; // 90% ~ 100%: 警戒深红（极危期）
+      return '#ff2626'; // 90% ~ 100%+: 纯正红（极危截断期，双轨汇流）
     }
   }
 
@@ -832,7 +820,7 @@ function installAgContextRingWidget() {
 
     const isCompressed = !!data.compressionDetected;
     const ringColor = (data.isOverLimit || ratio >= 1)
-      ? (isCompressed ? '#9f1239' : '#ef4444')
+      ? '#ff2626'
       : getRingColor(ratio, isCompressed);
     bar.style.stroke = ringColor;
 

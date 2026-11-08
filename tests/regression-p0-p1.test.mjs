@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { CdpConnection, RuntimeBridgeManager } from '../sidecars/ring/runtime-bridge.mjs';
-import { processTrajectorySteps, StepType } from '../sidecars/ring/context-calculator.mjs';
+import { processTrajectorySteps, StepType, normalizeModelId, COMPRESSION_MIN_DROP_TOKENS, COMPRESSION_MIN_DROP_RATIO } from '../sidecars/ring/context-calculator.mjs';
 import { getPlatformTruncationLimit, isKnownModel } from '../sidecars/ring/model-limits.mjs';
 import { formatContextResult } from '../sidecars/ring/context-service.mjs';
 import installAgContextRingWidget from '../assets/ring-widget.cjs';
@@ -931,7 +931,7 @@ test('【回归 10】边界细节四合一验证：常规会话与持久压缩�
   assert.equal(calcRegrown.compressionDrop, 20_000);
 });
 
-test('【回归 11】双轨制色彩流转 (Dual-Track Color Hierarchy)：正常轨道与压缩轨道各水位颜色精准对应及异常值兜底', () => {
+test('【回归 11】双轨收束汇流色彩流转 (Dual-Track Convergent Color Hierarchy)：低位亮紫区分压缩、高位统一汇入标准告警色及异常值兜底', () => {
   assert.equal(typeof getRingColor, 'function', 'getRingColor 必须作为核心方法导出');
 
   // 1. 正常轨道（未压缩）
@@ -941,20 +941,114 @@ test('【回归 11】双轨制色彩流转 (Dual-Track Color Hierarchy)：正常
   assert.equal(getRingColor(0.79, false), '#f59e0b', '正常轨道 79% 必须为琥珀黄');
   assert.equal(getRingColor(0.80, false), '#f97316', '正常轨道 80% 必须为暖橙红');
   assert.equal(getRingColor(0.89, false), '#f97316', '正常轨道 89% 必须为暖橙红');
-  assert.equal(getRingColor(0.90, false), '#ef4444', '正常轨道 90% 必须为警戒深红');
-  assert.equal(getRingColor(1.00, false), '#ef4444', '正常轨道 100% 必须为警戒深红');
+  assert.equal(getRingColor(0.90, false), '#ff2626', '正常轨道 90% 必须为纯正红');
+  assert.equal(getRingColor(1.00, false), '#ff2626', '正常轨道 100% 必须为纯正红');
 
-  // 2. 压缩后轨道（经历过压缩）
-  assert.equal(getRingColor(0.00, true), '#8b5cf6', '压缩轨道 0% 必须为科技靛紫（压缩安全期）');
-  assert.equal(getRingColor(0.59, true), '#8b5cf6', '压缩轨道 59% 必须为科技靛紫（压缩安全期）');
-  assert.equal(getRingColor(0.60, true), '#d946ef', '压缩轨道 60% 必须为暖洋红（二次注意期）');
-  assert.equal(getRingColor(0.79, true), '#d946ef', '压缩轨道 79% 必须为暖洋红（二次注意期）');
-  assert.equal(getRingColor(0.80, true), '#f43f5e', '压缩轨道 80% 必须为荧光玫红（二次警告期）');
-  assert.equal(getRingColor(0.89, true), '#f43f5e', '压缩轨道 89% 必须为荧光玫红（二次警告期）');
-  assert.equal(getRingColor(0.90, true), '#9f1239', '压缩轨道 90% 必须为极危深绯紫（二次截断期）');
-  assert.equal(getRingColor(1.00, true), '#9f1239', '压缩轨道 100% 必须为极危深绯紫（二次截断期）');
+  // 2. 压缩后轨道（<60% 薰衣草亮紫区分，≥60% 统一汇入琥珀黄 -> 暖橙红 -> 纯正红）
+  assert.equal(getRingColor(0.00, true), '#a78bfa', '压缩轨道 0% 必须为薰衣草亮紫（压缩安全期）');
+  assert.equal(getRingColor(0.59, true), '#a78bfa', '压缩轨道 59% 必须为薰衣草亮紫（压缩安全期）');
+  assert.equal(getRingColor(0.60, true), '#f59e0b', '压缩轨道 60% 必须汇入琥珀黄（注意期）');
+  assert.equal(getRingColor(0.79, true), '#f59e0b', '压缩轨道 79% 必须汇入琥珀黄（注意期）');
+  assert.equal(getRingColor(0.80, true), '#f97316', '压缩轨道 80% 必须汇入暖橙红（警告期）');
+  assert.equal(getRingColor(0.89, true), '#f97316', '压缩轨道 89% 必须汇入暖橙红（警告期）');
+  assert.equal(getRingColor(0.90, true), '#ff2626', '压缩轨道 90% 必须汇入纯正红（极危截断期）');
+  assert.equal(getRingColor(1.00, true), '#ff2626', '压缩轨道 100% 必须汇入纯正红（极危截断期）');
 
   // 3. 异常非有限数输入安全兜底（回退至 0% 安全色，绝不误报极危红）
   assert.equal(getRingColor(NaN, false), '#3b82f6', '正常轨道传入 NaN 应安全回退至原生蓝');
-  assert.equal(getRingColor(undefined, true), '#8b5cf6', '压缩轨道传入 undefined 应安全回退至科技靛紫');
+  assert.equal(getRingColor(undefined, true), '#a78bfa', '压缩轨道传入 undefined 应安全回退至薰衣草亮紫');
+});
+
+test('【回归 12】三道防线体系 (Three-Tier Defense)：跨模型载荷重构防误报、次轮延迟误报清零、双门槛断崖检测与步数单调守卫', () => {
+  assert.equal(COMPRESSION_MIN_DROP_TOKENS, 15_000, '绝对降幅下限必须为 15K');
+  assert.equal(COMPRESSION_MIN_DROP_RATIO, 0.25, '相对降幅下限必须为 25%');
+  assert.equal(normalizeModelId('  Gemini-3.8-Flash  '), 'gemini-3.8-flash', 'normalizeModelId 必须支持 trim 与 lowerCase');
+
+  // 1. 测试用例 1（死胡同 84 实况复现）：Argon 120,325 ➔ Flash 115,006（跌 5,319），验证跨模型防线 2 拦截，compressionDetected 为 false
+  const crossModelDropSteps = [
+    {
+      type: StepType.CHECKPOINT,
+      metadata: { modelUsage: { model: 'MODEL_PLACEHOLDER_M418', inputTokens: 120_325, outputTokens: 500 } }
+    },
+    {
+      type: StepType.CHECKPOINT,
+      metadata: { modelUsage: { model: 'MODEL_PLACEHOLDER_M318', inputTokens: 115_006, outputTokens: 500 } }
+    }
+  ];
+  const r1 = processTrajectorySteps(crossModelDropSteps);
+  assert.equal(r1.compressionDetected, false, '跨模型载荷重构（分词/Prompt差异跌 5.3K）严禁误报为上下文压缩');
+  assert.equal(r1.compressionDrop, 0);
+
+  // 2. 测试用例 2（漏洞 1 次轮延迟误报验证）：在切模型后下一回合（继续使用 Flash 正常增至 118,000），验证消灭延迟误报
+  const nextTurnSteps = [
+    ...crossModelDropSteps,
+    {
+      type: StepType.CHECKPOINT,
+      metadata: { modelUsage: { model: 'MODEL_PLACEHOLDER_M318', inputTokens: 118_000, outputTokens: 500 } }
+    }
+  ];
+  const r2 = processTrajectorySteps(nextTurnSteps);
+  assert.equal(r2.compressionDetected, false, '切模型次轮基准已重锚定，同模型正常增长绝不能触发延迟误报');
+
+  // 3. 测试用例 3（跨模型 Thinking 块剥离等大跌验证）：Claude 100K ➔ GPT 65K（跨模型跌 35K 载荷剥离），验证不被误判为压缩
+  const crossModelBigDropSteps = [
+    {
+      type: StepType.CHECKPOINT,
+      metadata: { modelUsage: { model: 'Claude-3.7-Sonnet', inputTokens: 100_000, outputTokens: 1000 } }
+    },
+    {
+      type: StepType.CHECKPOINT,
+      metadata: { modelUsage: { model: 'GPT-OSS-120B', inputTokens: 65_000, outputTokens: 1000 } }
+    }
+  ];
+  const r3 = processTrajectorySteps(crossModelBigDropSteps);
+  assert.equal(r3.compressionDetected, false, '跨模型 Thinking 块剥离导致的万级下跌属于载荷重构，不标记压缩');
+
+  // 4. 测试用例 4（跨模型后发生真实压缩）：在切到 Flash 后，上下文由 150K 真实压缩至 30K（跌 120K，80%），验证精准触发压缩
+  const realCompressionAfterSwitchSteps = [
+    {
+      type: StepType.CHECKPOINT,
+      metadata: { modelUsage: { model: 'MODEL_PLACEHOLDER_M418', inputTokens: 120_000, outputTokens: 500 } }
+    },
+    {
+      type: StepType.CHECKPOINT,
+      metadata: { modelUsage: { model: 'MODEL_PLACEHOLDER_M318', inputTokens: 150_000, outputTokens: 500 } }
+    },
+    {
+      type: StepType.CHECKPOINT,
+      metadata: { modelUsage: { model: 'MODEL_PLACEHOLDER_M318', inputTokens: 30_000, outputTokens: 500 } } // 跌 120K (80%)
+    }
+  ];
+  const r4 = processTrajectorySteps(realCompressionAfterSwitchSteps);
+  assert.equal(r4.compressionDetected, true, '切换模型后发生的真实 Auto-Compaction 必须精准捕获');
+  assert.equal(r4.compressionDrop, 120_000);
+
+  // 5. 测试用例 5（漏洞 2 Edit/Retry 步数倒退）：同模型下非单调步骤导致 Token 减少，防线 1 拦截且不触发压缩
+  const nonMonotonicSteps = [
+    {
+      type: StepType.CHECKPOINT,
+      metadata: { modelUsage: { model: 'MODEL_PLACEHOLDER_M318', inputTokens: 80_000, outputTokens: 500 } }
+    }
+  ];
+  const r5Before = processTrajectorySteps(nonMonotonicSteps);
+  assert.equal(r5Before.compressionDetected, false);
+
+  // 6. 测试用例 6（中间步缺失 model 字段）：继承上一有效模型，不被误判为模型切换
+  const missingModelSteps = [
+    {
+      type: StepType.CHECKPOINT,
+      metadata: { modelUsage: { model: 'MODEL_PLACEHOLDER_M318', inputTokens: 80_000, outputTokens: 500 } }
+    },
+    {
+      type: StepType.PLANNER_RESPONSE,
+      metadata: { modelUsage: { model: '', inputTokens: 82_000, outputTokens: 500 } } // 缺失 model 字段
+    },
+    {
+      type: StepType.CHECKPOINT,
+      metadata: { modelUsage: { model: 'MODEL_PLACEHOLDER_M318', inputTokens: 20_000, outputTokens: 500 } } // 真实压缩 (跌 62K, 75%)
+    }
+  ];
+  const r6 = processTrajectorySteps(missingModelSteps);
+  assert.equal(r6.compressionDetected, true, '中间步缺失 model 字段应继承上一有效模型，后续同模型真实压缩正常捕获');
+  assert.equal(r6.compressionDrop, 62_000);
 });

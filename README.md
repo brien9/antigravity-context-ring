@@ -71,15 +71,15 @@ Context Ring 将上下文感知收敛为一颗 19px 的原生行内圆环，在�
 
 ## 🎨 状态演进与分屏实测 · Visual States & Split View
 
-### 1. 双轨色彩反馈引擎 (Dual-Track Color Hierarchy)
+### 1. 收束汇流色彩反馈引擎 (Convergent Dual-Track Color Hierarchy)
 
-圆环伴随上下文水位平滑演进。未压缩会话遵循常规四阶色标（科技蓝 `<60%` ➔ 琥珀黄 `60-80%` ➔ 暖橙 `80-90%` ➔ 警戒红 `≥90%`）；一旦检测到历史上下文发生过自动压缩，立即切入**紫调压缩轨**（靛紫 ➔ 洋红 ➔ 荧光玫红 ➔ 深绯紫），清晰界定会话生命周期。
+圆环伴随上下文水位平滑演进。常规未压缩会话遵循四阶标准色标（科技蓝 `<60%` ➔ 琥珀黄 `60-80%` ➔ 暖橙 `80-90%` ➔ 纯正红 `≥90%`）；一旦检测到历史上下文发生过压缩（无论手动 `/compact` 还是自动压缩），在 `<60%` 安全期切换为清透的**薰衣草亮紫 (`#a78bfa`)** 标识“二周目摘要态”，并在 `≥60%` 时统一汇入标准黄/橙/正红告警轨，零色彩杂乱、直觉纯粹。
 
-| 🟢 健康初期 (`< 60%`) | 🟡 关注过渡 (`60% ~ 80%`) |
+| 🟢 健康初期 (`< 60%`) | 🟡 注意过渡 (`60% ~ 80%`) |
 | :---: | :---: |
-| <img src="assets/state-low.png" alt="Google Antigravity context usage low state (<60%) - native blue inline SVG ring" width="380"><br><sub>**原生科技蓝**：静默陪伴；新建未发消息的草稿态自动呈现半透明 `0.0K`</sub> | <img src="assets/state-medium.png" alt="Google Antigravity context usage medium state (60-80%) - amber warning ring" width="380"><br><sub>**琥珀温润黄**：提示会话进入深水区，留意单次对话载荷</sub> |
-| 🔴 临限极危 (`≥ 90%`) | 🟣 历史已压缩 (`Compacted`) |
-| <img src="assets/state-critical.png" alt="Google Antigravity context limit critical state (>=90%) - approaching 128K/256K auto-compaction truncation threshold" width="380"><br><sub>**饱和警戒红**：逼近平台物理截断阈值，建议及时收尾或开启新会话</sub> | <img src="assets/state-compacted.png" alt="Google Antigravity auto-compaction triggered state - dual-track purple ring showing released context tokens" width="380"><br><sub>**双轨科技紫**：标识已触发过 Auto-Compaction，气泡内展示释放容量</sub> |
+| <img src="assets/state-low.png" alt="Google Antigravity context usage low state (<60%) - native blue inline SVG ring" width="380"><br><sub>**原生科技蓝 (`#3b82f6`)**：静默陪伴；新建未发消息的草稿态自动呈现半透明 `0.0K`</sub> | <img src="assets/state-medium.png" alt="Google Antigravity context usage medium state (60-80%) - amber warning ring" width="380"><br><sub>**琥珀温润黄 (`#f59e0b`)**：提示会话进入深水区，留意单次对话载荷</sub> |
+| 🔴 临限极危 (`≥ 90%`) | 🟣 历史已压缩 (`Compacted < 60%`) |
+| <img src="assets/state-critical.png" alt="Google Antigravity context limit critical state (>=90%) - approaching 128K/256K auto-compaction truncation threshold" width="380"><br><sub>**高穿透纯正红 (`#ff2626`)**：逼近平台物理截断阈值，建议及时收尾或开启新会话</sub> | <img src="assets/state-compacted.png" alt="Google Antigravity auto-compaction triggered state - dual-track purple ring showing released context tokens" width="380"><br><sub>**薰衣草亮紫 (`#a78bfa`)**：标识历史已触发过上下文压缩，气泡内展示释放容量</sub> |
 
 ### 2. 多分屏独立隔离与实时联动 (Split View Isolation)
 

@@ -9,8 +9,17 @@ export const StepType = {
   GENERATE_IMAGE: 'CORTEX_STEP_TYPE_GENERATE_IMAGE',
 };
 
-// 触发上下文压缩检测的最小 Token 骤降阈值
-export const COMPRESSION_MIN_DROP = 5000;
+// 触发上下文压缩检测的双重门槛（绝对值 + 比例）
+export const COMPRESSION_MIN_DROP_TOKENS = 15_000; // 绝对降幅下限：15K Tokens
+export const COMPRESSION_MIN_DROP_RATIO = 0.25;   // 相对降幅下限：25%
+export const COMPRESSION_MIN_DROP = COMPRESSION_MIN_DROP_TOKENS; // 向后兼容别名
+
+/**
+ * 归一化模型标识，防止同模型不同大小写或首尾空格导致误判为模型切换
+ */
+export function normalizeModelId(model) {
+  return typeof model === 'string' ? model.trim().toLowerCase() : '';
+}
 
 // 系统 Prompt / 环境基础开销（当没有 Checkpoint 时的基准托底）
 export const SYSTEM_PROMPT_OVERHEAD = 10_000;
@@ -150,26 +159,77 @@ export function processTrajectorySteps(steps = [], options = {}) {
   let lastModelUsage = null;
   let usageSource = 'none'; // 'checkpoint' | 'planner' | 'estimated'
 
-  let prevCheckpointInputTokens = -1;
+  // 压缩状态机与水位基准跟踪
+  let lastCheckpointInputTokens = -1;
+  let baselinePeakTokens = 0;
+  let lastCheckpointModel = '';
+  let lastCheckpointStepIndex = -1;
+
   let compressionDetected = false;
   let compressionDrop = 0;
 
   let estimationDeltaSinceSnapshot = 0;
   let toolCallOutputsSinceSnapshot = 0;
 
-  const updateCompressionState = (currentInputTotal) => {
-    if (prevCheckpointInputTokens > 0 && currentInputTotal < prevCheckpointInputTokens) {
-      const drop = prevCheckpointInputTokens - currentInputTotal;
-      if (drop > COMPRESSION_MIN_DROP) {
-        compressionDetected = true;
-        compressionDrop = Math.max(compressionDrop, drop);
-        prevCheckpointInputTokens = currentInputTotal;
-        return;
-      }
+  const updateCompressionState = (currentInputTotal, currentModel = '', currentStepIndex = -1) => {
+    if (!Number.isFinite(currentInputTotal) || currentInputTotal <= 0) {
+      return;
     }
-    // 方案 L1（会话级持久烙印）：一旦触发过上下文压缩，全生命周期保持 compressionDetected = true，
-    // 不再因后续多轮对话重新涨回水位或新增 Token 而被动清空，确保高水位时稳定呈现紫红二次超限阶梯
-    prevCheckpointInputTokens = currentInputTotal;
+
+    const normModel = normalizeModelId(currentModel);
+
+    // 1. 初始化首个有效基准点
+    if (lastCheckpointInputTokens <= 0) {
+      lastCheckpointInputTokens = currentInputTotal;
+      baselinePeakTokens = currentInputTotal;
+      lastCheckpointModel = normModel;
+      lastCheckpointStepIndex = currentStepIndex;
+      return;
+    }
+
+    // 防线 1：轨迹步数单调性守卫（防止用户在历史节点重试/回退导致步数倒退被误判为压缩）
+    if (currentStepIndex >= 0 && lastCheckpointStepIndex >= 0 && currentStepIndex <= lastCheckpointStepIndex) {
+      lastCheckpointInputTokens = currentInputTotal;
+      baselinePeakTokens = currentInputTotal;
+      if (normModel) lastCheckpointModel = normModel;
+      lastCheckpointStepIndex = currentStepIndex;
+      return;
+    }
+
+    // 防线 2：模型连续性守卫（跨模型载荷重构：异构 Thinking 块剥离、System Prompt 与工具模板切换）
+    // 注意：若 normModel 为空（部分中间步骤缺失 model 字段），默认继承上一有效模型，避免误触发模型切换
+    const isModelSwitched = !!(normModel && lastCheckpointModel && normModel !== lastCheckpointModel);
+    if (isModelSwitched) {
+      // 关键：模型发生切换时，立即将基准与峰值重锚定（Re-anchor）到新模型的当前水位！
+      // 既不误报压缩，又彻底消除下一回合（同模型）因拿旧模型高水位比对导致的延迟误报
+      lastCheckpointInputTokens = currentInputTotal;
+      baselinePeakTokens = currentInputTotal;
+      lastCheckpointModel = normModel;
+      lastCheckpointStepIndex = currentStepIndex;
+      return;
+    }
+
+    // 防线 3：同模型下的双门槛断崖检测（绝对降幅 >= 15K 且 相对降幅 >= 25%）
+    const referenceTokens = Math.max(lastCheckpointInputTokens, baselinePeakTokens || 0);
+    const dropTokens = referenceTokens - currentInputTotal;
+    const dropRatio = referenceTokens > 0 ? dropTokens / referenceTokens : 0;
+
+    if (
+      dropTokens >= COMPRESSION_MIN_DROP_TOKENS &&
+      dropRatio >= COMPRESSION_MIN_DROP_RATIO
+    ) {
+      compressionDetected = true;
+      compressionDrop = Math.max(compressionDrop, dropTokens);
+      // 触发压缩后，将峰值重锚定到压缩后的新水位
+      baselinePeakTokens = currentInputTotal;
+    } else {
+      // 正常增长或微小波动，更新当前模型段内的峰值水位
+      baselinePeakTokens = Math.max(baselinePeakTokens || 0, currentInputTotal);
+    }
+
+    lastCheckpointInputTokens = currentInputTotal;
+    if (normModel) lastCheckpointModel = normModel;
+    lastCheckpointStepIndex = currentStepIndex;
   };
 
   for (let idx = 0; idx < steps.length; idx++) {
@@ -228,7 +288,7 @@ export function processTrajectorySteps(steps = [], options = {}) {
         }
 
         const currentInputTotal = usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
-        updateCompressionState(currentInputTotal);
+        updateCompressionState(currentInputTotal, usage.model, idx);
 
         lastModelUsage = usage;
         usageSource = 'checkpoint';
@@ -248,7 +308,7 @@ export function processTrajectorySteps(steps = [], options = {}) {
         }
 
         const currentInputTotal = usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
-        updateCompressionState(currentInputTotal);
+        updateCompressionState(currentInputTotal, usage.model, idx);
 
         lastModelUsage = usage;
         usageSource = 'planner';
