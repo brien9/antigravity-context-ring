@@ -8,7 +8,8 @@ In Google Antigravity IDE, developers lack real-time visibility into active cont
 ## Key Architecture Specifications
 - Non-Invasive CDP Runtime: Zero binary modification. Never alters or unpacks resources/app.asar. Connects via Chrome DevTools Protocol (CDP) to inject an isolated vanilla JavaScript/SVG microkernel (19px SVG ring).
 - Hardware Ground Truth: Communicates with the local Antigravity Language Server over Connect-RPC. Reads actual modelUsage metadata (prompt tokens, completion tokens, cacheReadTokens, cacheCreationTokens). No heuristic character guessing.
-- Three-Tier Model Decoupling: Separates selectedModel (UI primary model, uniquely dictates capacity denominator), executionModel (subtask execution model), and checkpointModel (trajectory snapshot model). Prevents lightweight subagents (e.g., flash_lite) from distorting the denominator.
+- Three-Tier Model Decoupling: Separates selectedModel (effective primary model for the capacity denominator), executionModel (subtask execution model), and checkpointModel (trajectory snapshot model). A USER_INPUT without an explicit planner model re-anchors the denominator on the next authoritative checkpoint; lightweight subagent steps cannot alter it.
+- Authoritative Pagination & Tail Window: Uses symmetric 1,000-step pages. Trajectories over 5,000 steps query the authoritative trajectory `stepCount`, analyze only the newest 5,000-step window, and expose `isWindowed` / `totalSteps` so a tail window is never presented as a complete trajectory.
 - Dual-Tier SWR & Never-Reset Guard: In-memory LRU cache (50 sessions) + persistent LocalStorage cache (100 sessions). Renders valid historical snapshots in 0ms on session switch. Holds last-known verified state on transient host disconnects rather than blinking to zero.
 - Split View Isolation: Each visible composer container maintains an independent state-machine lifecycle (Map<box, PaneRingInstance>) binding directly to its React Fiber node, guaranteeing zero cross-pane pollution.
 - Resource Footprint: Background Node.js sidecar consumes ~18MB RAM and near-0% CPU, regulated by 250ms debounced event coalescing and an automated host watchdog.
@@ -23,7 +24,7 @@ In Google Antigravity IDE, developers lack real-time visibility into active cont
 
 ## Installation & CLI Commands
 Clone repository:
-git clone https://github.com/brien9/antigravity-context-ring.git
+git clone https://github.com/uuo310/antigravity-context-ring.git
 cd antigravity-context-ring
 
 Install on Windows (PowerShell):

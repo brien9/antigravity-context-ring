@@ -47,7 +47,19 @@ if (Test-Path $configFile) {
         $raw = Get-Content $configFile -Raw -Encoding UTF8
         $config = $raw | ConvertFrom-Json
         if ($config.PSObject.Properties['plugins'] -and $config.plugins.PSObject.Properties['antigravity-context-ring']) {
-            $config.plugins.'antigravity-context-ring'.enabled = $false
+            $pluginNode = $config.plugins.'antigravity-context-ring'
+            if ($null -eq $pluginNode) {
+                $pluginNode = [PSCustomObject]@{ enabled = $false }
+                $config.plugins.'antigravity-context-ring' = $pluginNode
+            } elseif ($pluginNode.GetType().Name -eq 'PSCustomObject') {
+                if ($pluginNode.PSObject.Properties['enabled']) {
+                    $pluginNode.enabled = $false
+                } else {
+                    $pluginNode | Add-Member -NotePropertyName 'enabled' -NotePropertyValue $false
+                }
+            } else {
+                throw "plugins.antigravity-context-ring must be a JSON object"
+            }
             $jsonContent = $config | ConvertTo-Json -Depth 20
             [System.IO.File]::WriteAllText($configFile, $jsonContent, (New-Object System.Text.UTF8Encoding($false)))
         }
@@ -67,6 +79,10 @@ if (Test-Path $targetDir) {
             Start-Sleep -Milliseconds 500
         }
     }
+}
+if (Test-Path $targetDir) {
+    Write-Warning "Plugin directory still exists after cleanup retries: $targetDir"
+    exit 1
 }
 
 Write-Host "------------------------------------------" -ForegroundColor Green

@@ -136,7 +136,7 @@ flowchart TD
 * **纯硬件级 RPC 快照（零字符猜测）**：遵循成熟 Harness 规范，直接从底层 Language Server 提取 `modelUsage` 结构，完整纳入输入、输出、`cacheReadTokens` 与 `cacheCreationTokens`。
 * **三层模型解耦引擎**：严格区分 `selectedModel`（UI 主选模型，唯一决定分母）、`executionModel`（当前步骤执行模型）与 `checkpointModel`（快照落盘模型），根除 Subagent 临时调用轻量模型导致的进度条失真。
 * **双阶 SWR 与 Never-Reset 防线**：内置 50 会话内存 LRU + 100 会话 LocalStorage 持久化快照。切换历史会话 0ms 渲染有效快照并后台静默校准；遇到窗口重载或 Language Server 偶发重启时，强制锁死最后一帧有效状态，绝不闪烁归零。
-* **万步穿透分页**：突破单次 RPC 查询的 1000 步限制，在超长复杂任务中自动分页回溯，精准定位最新有效 Checkpoint。
+* **权威总步数 + 尾部窗口**：突破单次 RPC 查询的 1000 步限制；超过 5000 步时读取权威 `stepCount` 并聚焦最新 5000 步，确保当前 Checkpoint 不被旧前缀遮蔽，同时在气泡中明确标注“长会话尾部”。
 
 ---
 

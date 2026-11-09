@@ -31,18 +31,26 @@ function jsonGet(port, path) {
 }
 
 export async function discoverTargets(profileDir) {
+  let text;
   try {
-    const text = await readFile(join(profileDir, 'DevToolsActivePort'), 'utf8');
-    const port = Number(text.split(/\r?\n/)[0]);
-    if (!Number.isInteger(port) || port < 1 || port > 65535) return [];
-
-    const list = await jsonGet(port, '/json/list');
-    if (!Array.isArray(list)) return [];
-
-    return list.filter(target => target.type === 'page' && target.webSocketDebuggerUrl);
+    text = await readFile(join(profileDir, 'DevToolsActivePort'), 'utf8');
   } catch {
-    return [];
+    return null;
   }
+
+  const port = Number(text.split(/\r?\n/)[0]);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+
+  let list;
+  try {
+    list = await jsonGet(port, '/json/list');
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(list)) return null;
+
+  // 只有成功拿到 CDP 列表时才返回数组；空数组代表宿主确认当前无页面，而不是发现失败
+  return list.filter(target => target.type === 'page' && target.webSocketDebuggerUrl);
 }
 
 export class CdpConnection {
@@ -130,6 +138,7 @@ export class CdpConnection {
     let result = { ready: false };
 
     if (type === 'snapshot') {
+      const reqCid = input?.conversationId || null;
       const force = !!input?.force;
       const calcOptions = {};
       if (typeof input?.selectedModel === 'string' && input.selectedModel) {
@@ -138,19 +147,23 @@ export class CdpConnection {
       if (typeof input?.fallbackModel === 'string' && input.fallbackModel) {
         calcOptions.fallbackModel = input.fallbackModel;
       }
-      result = await getContextSnapshot(input?.conversationId || null, force, calcOptions);
+      result = await getContextSnapshot(reqCid, force, calcOptions);
       if (this.closed) return;
+      if (reqCid) {
+        result.cid = reqCid;
+        result.conversationId = result.conversationId || reqCid;
+      }
       if (result.ready) {
-        logBridge(`Snapshot OK: cid=${input?.conversationId} force=${force} used=${result.used} (${result.usedK}) limit=${result.limitK} ratio=${result.percent}`);
+        logBridge(`Snapshot OK: cid=${reqCid} force=${force} used=${result.used} (${result.usedK}) limit=${result.limitK} ratio=${result.percent}`);
         console.log(`[ContextRing] Pushed snapshot: used=${result.used} (${result.usedK}) limit=${result.limitK} ratio=${result.percent}`);
       } else {
-        logBridge(`Snapshot NOT ready: cid=${input?.conversationId}`);
+        logBridge(`Snapshot NOT ready: cid=${reqCid}`);
       }
     }
 
     if (this.closed) return;
 
-    const replyScript = `window.__agContextRingBridge?.resolve(${id}, ${JSON.stringify(result)})`;
+    const replyScript = `window.__agContextRingBridge?.resolve(${JSON.stringify(id)}, ${JSON.stringify(result)})`;
     try {
       await this.command('Runtime.evaluate', {
         expression: replyScript,
@@ -178,15 +191,16 @@ function getBridgeScript(bindingName) {
       delete window.__agContextRingBridge;
       delete window.__agContextRingHost;
 
+      const bridgeInstId = 'br_' + Math.random().toString(36).slice(2, 10);
       const pending = new Map();
       let seq = 0;
 
       const call = (type, input) => new Promise((resolve) => {
-        const id = ++seq;
+        const id = bridgeInstId + '_' + (++seq);
         const timer = setTimeout(() => {
           pending.delete(id);
           resolve({ ready: false, offline: true });
-        }, 3500);
+        }, 8500);
         pending.set(id, { resolve, timer });
         try {
           window['${bindingName}'](JSON.stringify({ id, type, input }));
@@ -219,9 +233,10 @@ function getBridgeScript(bindingName) {
  * 管理与宿主窗口的 CDP 连接与注入
  */
 export class RuntimeBridgeManager {
-  constructor(profileDir, widgetCode) {
+  constructor(profileDir, widgetCode, options = {}) {
     this.profileDir = profileDir;
     this.widgetCode = widgetCode;
+    this.discoverTargets = typeof options.discoverTargets === 'function' ? options.discoverTargets : discoverTargets;
     this.connections = new Map();
     this.running = false;
     this.pollTimer = null;
@@ -312,23 +327,37 @@ export class RuntimeBridgeManager {
   async _performSync(gen) {
     if (!this.running || this.generation !== gen) return;
 
-    const targets = await discoverTargets(this.profileDir);
+    const targets = await this.discoverTargets(this.profileDir);
     if (!this.running || this.generation !== gen) return;
 
-    const activeUrls = new Set(targets.map(t => t.webSocketDebuggerUrl));
+    if (targets !== null) {
+      const activeUrls = new Set(targets.map(t => t.webSocketDebuggerUrl));
 
-    // 清理断开的目标
-    for (const [url, conn] of this.connections.entries()) {
-      if (!activeUrls.has(url) || conn.closed) {
-        conn.close();
-        this.connections.delete(url);
+      // 仅当目标列表发现成功时，才按列表清理已经消失的页面
+      for (const [url, conn] of this.connections.entries()) {
+        if (!activeUrls.has(url) || conn.closed) {
+          conn.close();
+          this.connections.delete(url);
+        }
+      }
+    } else {
+      // 发现失败不代表页面消失：保留健康连接并继续巡检，仅移除本地已明确关闭的连接
+      for (const [url, conn] of this.connections.entries()) {
+        if (conn.closed) {
+          conn.close();
+          this.connections.delete(url);
+        }
       }
     }
 
     if (!this.running || this.generation !== gen) return;
 
-    // 连接新目标或巡检存量目标
-    for (const target of targets) {
+    // 连接新目标或巡检存量目标；发现失败时不引入新目标，但继续巡检所有存量连接
+    const targetsToProcess = targets !== null
+      ? targets
+      : Array.from(this.connections.keys(), url => ({ webSocketDebuggerUrl: url }));
+
+    for (const target of targetsToProcess) {
       if (!this.running || this.generation !== gen) return;
 
       const url = target.webSocketDebuggerUrl;

@@ -136,7 +136,7 @@ flowchart TD
 * **Hardware-Grade RPC Ground Truth (Zero Character Guessing)**: Adhering to professional harness engineering standards, telemetry reads `modelUsage` structures directly from the local Language Server over Connect-RPC, capturing input, output, `cacheReadTokens`, and `cacheCreationTokens`.
 * **Three-Tier Model Decoupling Engine**: Decouples `selectedModel` (the UI-selected model that strictly dictates capacity denominator), `executionModel` (the subtask execution model), and `checkpointModel` (the snapshot model), preventing lightweight subagents (e.g. `flash_lite`) from distorting primary telemetry.
 * **Dual-Tier SWR & Never-Reset Guard**: 50-session in-memory LRU + 100-session persistent LocalStorage cache. Switching historical conversations renders valid snapshots in 0ms followed by silent background calibration. On host reloads or transient disconnects, the ring locks the latest verified state rather than blinking to zero.
-* **Paginated Multi-Thousand Step Traversal**: Bypasses the 1,000-step ceiling of single RPC queries with automatic pagination, ensuring accurate checkpoint retrieval even in marathon coding sessions.
+* **Authoritative Total + Tail Window**: Bypasses the 1,000-step ceiling of a single RPC query. For trajectories over 5,000 steps, it reads the authoritative `stepCount` and analyzes the newest 5,000-step window, so the current checkpoint is never hidden by an old prefix and the tooltip explicitly marks a long-session tail window.
 
 ---
 

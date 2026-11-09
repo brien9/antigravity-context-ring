@@ -204,7 +204,7 @@ test('【深度审计 Bug 2】AGY_TEST_TARGET_DIR 双向测试沙箱隔离：严
   assert.equal(isContextRingProcess(sandboxCmd, 1002, 9999, sandboxDir), true, '测试沙箱模式下精准匹配沙箱内的 Sidecar 进程');
 });
 
-test('【深度审计 Bug 3 & Bug 4 & Bug 5】setCachedSnapshot 回退读取 L2 LocalStorage、模型切换即时穿透刷新与 Claude 4.6 占位符分母推导', async () => {
+test('【深度审计 Bug 3 & Bug 4 & Bug 5】setCachedSnapshot 回退读取 L2 LocalStorage、历史模型切换不强制穿透与 Claude 4.6 占位符分母推导', async () => {
   // Bug 5：Claude 4.6 MODEL_PLACEHOLDER_M26 / M35 推导为 160000
   assert.equal(inferClientModelLimit('MODEL_PLACEHOLDER_M26'), 160_000, 'MODEL_PLACEHOLDER_M26 (Claude 4.6) 必须推导为 160K');
   assert.equal(inferClientModelLimit('MODEL_PLACEHOLDER_M35'), 160_000, 'MODEL_PLACEHOLDER_M35 (Claude 4.6) 必须推导为 160K');
@@ -217,12 +217,12 @@ test('【深度审计 Bug 3 & Bug 4 & Bug 5】setCachedSnapshot 回退读取 L2 
   assert.equal(
     getBackendCachedSnapshot(cidBackend, tNow + 100, { fallbackModel: 'Claude Sonnet 4.6' }),
     null,
-    '切换模型提示后必须立即穿透 8s 后端缓存，拒绝返回旧分母数据'
+    '切换模型提示后必须错过旧签名缓存，拒绝直接复用旧提示对应的缓存条目'
   );
 
   // Bug 3 & Bug 4 前端部分：
   // 1) L1 为空但 L2 LocalStorage 存有高世代精确快照 (contextEpoch: 3, used: 100K) 时，setCachedSnapshot 必须从 L2 恢复 existing 并拦截粗估覆盖 & 保留世代号
-  // 2) 在已挂载分屏上切换模型选择器文本时，mountOrUpdatePane 短路守卫必须检测模型变化并立即触发 force 刷新
+  // 2) 在已挂载历史分屏上切换模型选择器文本时，短路守卫必须立即同步最新 fallback 提示，但不得强制穿透
   const CID_L2 = '11111111-2222-3333-4444-555555555555';
   const createShadowMap = () => {
     const map = new Map();
@@ -385,11 +385,11 @@ test('【深度审计 Bug 3 & Bug 4 & Bug 5】setCachedSnapshot 回退读取 L2 
     nextRpcResponse = {
       ready: true,
       used: 80_000,
-      limit: 160_000,
-      ratio: 0.50,
+      limit: 256_000,
+      ratio: 0.3125,
       usedK: '80.0K',
-      limitK: '160.0K',
-      percent: '50.0%',
+      limitK: '256.0K',
+      percent: '31.3%',
       isEstimated: false,
       source: 'checkpoint',
       lastStepIndex: 25
@@ -403,14 +403,14 @@ test('【深度审计 Bug 3 & Bug 4 & Bug 5】setCachedSnapshot 回退读取 L2 
 
     assert.ok(rpcRequests.length > countBeforeSwitch, '模型选择器变更后短路守卫必须立即触发新的快照拉取');
     const latestReq = rpcRequests[rpcRequests.length - 1];
-    assert.equal(latestReq.force, true, '模型切换触发的同步必须携带 force: true');
+    assert.equal(latestReq.force, undefined, '历史会话纯下拉变化不得携带 force；force 仅保留给真实 agent 状态变化');
     assert.equal(latestReq.fallbackModel, 'Claude Sonnet 4.6', '必须传递最新切换的模型提示');
 
     const persistedAfterSwitch = JSON.parse(storageMap.get('ag_ring_snap_' + CID_L2));
-    assert.equal(persistedAfterSwitch.limit, 160_000, '切换模型后缓存分母立即更新为 160K');
+    assert.equal(persistedAfterSwitch.limit, 256_000, '历史会话分母必须继续由真实轨迹快照驱动，不能被前端下拉提示篡改');
     assert.equal(persistedAfterSwitch.contextEpoch, 3, '更新快照后依然继承 L2 的 contextEpoch: 3');
 
-    // 验证 Bug 4 (B - 非短路 DOM 重建分支)：当模型切换同时伴随宿主容器子节点重建（不命中短路守卫）时，重挂载依然必须传递 force: true
+    // 验证 Bug 4 (B - 非短路 DOM 重建分支)：模型切换伴随宿主容器重建时，重挂载仍只传递最新提示且不强制穿透
     const countBeforeRemountSwitch = rpcRequests.length;
     currentModelText = 'Gemini 3.1 Pro';
     flexContainer.insertedNodes = []; // 模拟父容器重建导致不再包含旧 node，走非短路重挂载分支
@@ -419,7 +419,7 @@ test('【深度审计 Bug 3 & Bug 4 & Bug 5】setCachedSnapshot 回退读取 L2 
 
     assert.ok(rpcRequests.length > countBeforeRemountSwitch, '非短路重挂载下模型切换必须触发新的快照拉取');
     const remountReq = rpcRequests[rpcRequests.length - 1];
-    assert.equal(remountReq.force, true, '非短路重挂载伴随模型切换时，syncPaneState 依然必须携带 force: true');
+    assert.equal(remountReq.force, undefined, '非短路重挂载伴随纯模型切换时同样不得携带 force');
     assert.equal(remountReq.fallbackModel, 'Gemini 3.1 Pro', '必须传递重挂载后的最新模型提示');
   } finally {
     if (globalThis.window?.__agContextRingDispose) {

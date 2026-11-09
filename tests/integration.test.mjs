@@ -1,10 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, existsSync } from 'node:fs';
+import { mkdir, rm } from 'node:fs/promises';
+import { resolve, dirname, join } from 'node:path';
+import { spawn, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import {
   processTrajectorySteps,
   StepType
 } from '../sidecars/ring/context-calculator.mjs';
-import { formatContextResult } from '../sidecars/ring/context-service.mjs';
+import { formatContextResult, getContextSnapshot, getStepFingerprint } from '../sidecars/ring/context-service.mjs';
+import { CdpConnection } from '../sidecars/ring/runtime-bridge.mjs';
+import installAgContextRingWidget from '../assets/ring-widget.cjs';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 test('场景 1: 新会话开始，数据从无到有 (中性空心状态过渡到有数据)', () => {
   // 会话尚未产生任何 step
@@ -619,4 +629,706 @@ test('【阶段三集成测试 3】全链路三层模型解耦与视图呈现：
   // 占比: 102500 / 128000 ≈ 80.1%
   assert.equal(view.percent, '80.1%');
   assert.ok(view.tooltip.includes('80.1% · 102.5K / 128.0K 上下文已使用'));
+});
+
+test('【阶段三集成测试 4】恰好 5000 步：单步前瞻确认为自然结束，不得误报截断；999 步不截断', async () => {
+  const PAGE_SIZE = 1000;
+  let rpcCalls = 0;
+  const requestedRanges = [];
+
+  async function mockRpc(target, method, params) {
+    rpcCalls++;
+    requestedRanges.push({ start: params.startIndex, end: params.endIndex });
+    if (params.startIndex >= 5000) return { steps: [] };
+    // 每页均返回满整页 1000 条具有唯一 ID 的 step
+    return {
+      steps: Array.from({ length: PAGE_SIZE }, (_, i) => ({
+        stepIndex: params.startIndex + i,
+        type: StepType.PLANNER_RESPONSE,
+        plannerResponse: { response: `Step ${params.startIndex + i}` }
+      }))
+    };
+  }
+
+  // 1. 真实调用 context-service.getContextSnapshot
+  const view = await getContextSnapshot('mock-cascade-exact-5000', true, {
+    _ls: { port: 9999 },
+    _rpcCall: mockRpc
+  });
+
+  // 5 页数据 + 1 次单步边界探针
+  assert.equal(rpcCalls, 6);
+  assert.equal(view.stepCount, 5000);
+  assert.equal(view.isTruncated, false, '恰好 5000 步且边界探针为空时必须视为完整轨迹');
+  assert.equal(view.isWindowed, false);
+
+  // 验证每次请求均严格等长对称（无 PAGE_SIZE + 1 缝合窗口）
+  for (const r of requestedRanges) {
+    assert.equal(r.end - r.start, 1000, '每次 RPC 请求区间跨度必须严格固定为 1000');
+  }
+
+  assert.ok(!view.tooltip.includes('不完整') && !view.tooltip.includes('长会话'), `完整 5000 步不得误报数据缺失: ${view.tooltip}`);
+
+  // 边界验证：若第 5 页仅返回 999 条（总共 4999 条），绝不能误判为截断
+  let boundaryCalls = 0;
+  async function mockBoundaryRpc(target, method, params) {
+    boundaryCalls++;
+    const len = params.startIndex === 4000 ? 999 : PAGE_SIZE;
+    return {
+      steps: Array.from({ length: len }, (_, i) => ({
+        stepIndex: params.startIndex + i,
+        type: StepType.PLANNER_RESPONSE,
+        plannerResponse: { response: `Step ${params.startIndex + i}` }
+      }))
+    };
+  }
+
+  const boundaryView = await getContextSnapshot('mock-cascade-boundary-999', true, {
+    _ls: { port: 9999 },
+    _rpcCall: mockBoundaryRpc
+  });
+
+  assert.equal(boundaryCalls, 5, '第 5 页无论 999 还是 1000 均需完整发起');
+  assert.equal(boundaryView.stepCount, 4999);
+  assert.equal(boundaryView.isTruncated, false, '第 5 页返回 999 条（小于 1000）代表自然结束，绝不能标记截断');
+  assert.ok(!boundaryView.tooltip.includes('截断'), '未截断会话 tooltip 不得含截断字样');
+});
+
+test('【阶段三集成测试 4-B】6000 步超长会话：读取最新尾部窗口，末步 Checkpoint 不得被前 5000 步遮蔽', async () => {
+  const total = 6000;
+  const steps = Array.from({ length: total }, (_, i) => ({
+    stepIndex: i,
+    type: StepType.PLANNER_RESPONSE,
+    plannerResponse: { response: `Step ${i}` }
+  }));
+  steps[0] = {
+    stepIndex: 0,
+    type: StepType.CHECKPOINT,
+    metadata: {
+      modelUsage: { model: 'MODEL_PLACEHOLDER_M318', inputTokens: 10_000, outputTokens: 0 }
+    }
+  };
+  steps[total - 1] = {
+    stepIndex: total - 1,
+    type: StepType.CHECKPOINT,
+    metadata: {
+      modelUsage: { model: 'MODEL_PLACEHOLDER_M318', inputTokens: 200_000, outputTokens: 0 }
+    }
+  };
+
+  let summaryCalls = 0;
+  let dataCalls = 0;
+  async function mockRpc(target, method, params) {
+    if (method === 'GetAllCascadeTrajectories') {
+      summaryCalls++;
+      return {
+        trajectorySummaries: {
+          'mock-cascade-6000': { stepCount: total, lastModifiedTime: '2026-11-09T12:00:00Z' }
+        }
+      };
+    }
+    dataCalls++;
+    return { steps: steps.slice(params.startIndex, params.endIndex) };
+  }
+
+  const view = await getContextSnapshot('mock-cascade-6000', true, {
+    _ls: { port: 9999 },
+    _rpcCall: mockRpc
+  });
+
+  assert.equal(summaryCalls, 1, '仅在确认超过 5000 步后才查询一次权威总步数');
+  assert.equal(dataCalls, 7, '5 页前缀 + 1 次边界探针 + 1 页尾部补齐');
+  assert.equal(view.stepCount, 5000, '只保留并分析最新 5000 步窗口');
+  assert.equal(view.totalSteps, 6000);
+  assert.equal(view.isWindowed, true);
+  assert.equal(view.isTruncated, true, '窗口化属于不完整分析，必须显式标记而非伪装完整');
+  assert.equal(view.used, 200_000, '必须采用第 5999 步的最新 Checkpoint，而不是停留在旧水位');
+  assert.equal(view.lastStepIndex, 5999, '必须保留服务端真实步号');
+  assert.match(view.tooltip, /长会话尾部 5000\/6000 步/);
+});
+
+test('【阶段三集成测试 4-C】恰好 5000 步：边界探针为空即结束，不得误报窗口化或截断', async () => {
+  const total = 5000;
+  const steps = Array.from({ length: total }, (_, i) => ({
+    stepIndex: i,
+    type: StepType.PLANNER_RESPONSE,
+    plannerResponse: { response: `Step ${i}` }
+  }));
+  steps[total - 1] = {
+    stepIndex: total - 1,
+    type: StepType.CHECKPOINT,
+    metadata: {
+      modelUsage: { model: 'MODEL_PLACEHOLDER_M318', inputTokens: 200_000, outputTokens: 0 }
+    }
+  };
+
+  let summaryCalls = 0;
+  let dataCalls = 0;
+  async function mockRpc(target, method, params) {
+    if (method === 'GetAllCascadeTrajectories') {
+      summaryCalls++;
+      return { trajectorySummaries: {} };
+    }
+    dataCalls++;
+    return { steps: steps.slice(params.startIndex, params.endIndex) };
+  }
+
+  const view = await getContextSnapshot('mock-cascade-5000', true, {
+    _ls: { port: 9999 },
+    _rpcCall: mockRpc
+  });
+
+  assert.equal(summaryCalls, 0, '恰好 5000 步时边界探针已足以判定结束，不得再查权威总步数');
+  assert.equal(dataCalls, 6, '应为 5 页前缀 + 1 次边界探针，且不发起尾部补页');
+  assert.equal(view.stepCount, 5000);
+  assert.equal(view.totalSteps, 5000);
+  assert.equal(view.isWindowed, false, '完整 5000 步不得被标记为尾部窗口');
+  assert.equal(view.isTruncated, false, '完整 5000 步不得误报截断');
+  assert.equal(view.used, 200_000, '末步 Checkpoint 必须被采纳');
+  assert.equal(view.lastStepIndex, 4999);
+  assert.ok(!view.tooltip.includes('长会话尾部'), '完整会话不得显示尾部窗口提示');
+  assert.ok(!view.tooltip.includes('不完整'), '完整会话不得显示数据不完整');
+});
+
+test('【阶段三集成测试 5】标准等长分页提前退出：单页小于 1000 步正常结束且 isTruncated = false', async () => {
+  let rpcCalls = 0;
+
+  async function mockRpc(target, method, params) {
+    rpcCalls++;
+    if (params.startIndex === 0) {
+      return {
+        steps: Array.from({ length: 1000 }, (_, i) => ({
+          stepIndex: i,
+          type: StepType.PLANNER_RESPONSE
+        }))
+      };
+    }
+    if (params.startIndex === 1000) {
+      // 第 2 页只有 350 条（小于 1000），标志着会话结束
+      return {
+        steps: Array.from({ length: 350 }, (_, i) => ({
+          stepIndex: 1000 + i,
+          type: StepType.PLANNER_RESPONSE
+        }))
+      };
+    }
+    return { steps: [] };
+  }
+
+  // 真实调用 context-service.getContextSnapshot
+  const view = await getContextSnapshot('mock-cascade-normal', true, {
+    _ls: { port: 9999 },
+    _rpcCall: mockRpc
+  });
+
+  assert.equal(rpcCalls, 2, '第 2 页小于 1000 时应立即退出，不应发起第 3 页');
+  assert.equal(view.stepCount, 1350);
+  assert.equal(view.isTruncated, false, '正常提前退出的会话绝不能标记截断');
+  assert.ok(!view.tooltip.includes('截断'));
+});
+
+test('【阶段三集成测试 6】服务端忽略分页返回重复步骤：seenStepKeys 保证短路熔断防死循环', async () => {
+  let rpcCalls = 0;
+
+  // 模拟服务端 Bug：无论 startIndex 是多少，始终返回第一页的相同步骤
+  async function buggyRpc(target, method, params) {
+    rpcCalls++;
+    return {
+      steps: Array.from({ length: 1000 }, (_, i) => ({
+        stepIndex: i, // 固定的 stepIndex
+        type: StepType.PLANNER_RESPONSE
+      }))
+    };
+  }
+
+  // 真实调用 context-service.getContextSnapshot
+  const view = await getContextSnapshot('mock-cascade-buggy', true, {
+    _ls: { port: 9999 },
+    _rpcCall: buggyRpc
+  });
+
+  assert.equal(rpcCalls, 2, '第 2 页步骤全部重复时，addedInPage === 0 必须立即短路熔断');
+  assert.equal(view.stepCount, 1000, '只收纳第 1 页的有效 1000 步');
+  assert.equal(view.isTruncated, false);
+});
+
+test('【阶段三集成测试 7】无 stepIndex/id/contentId 时服务端重复吐出全量数据：第二道防线轻量首步指纹跨页比对短路熔断', async () => {
+  let rpcCalls = 0;
+
+  // 模拟服务端 Bug：步骤对象没有任何 stepIndex、id 或 modelApiContentId，且每次请求均返回相同的全量列表
+  async function buggyRpcWithoutIds(target, method, params) {
+    rpcCalls++;
+    return {
+      steps: Array.from({ length: 1000 }, (_, i) => ({
+        type: StepType.PLANNER_RESPONSE,
+        plannerResponse: { response: `Planner response step without id ${i}` }
+      }))
+    };
+  }
+
+  const view = await getContextSnapshot('mock-cascade-buggy-no-id', true, {
+    _ls: { port: 9999 },
+    _rpcCall: buggyRpcWithoutIds
+  });
+
+  // 验证：尽管 steps 没有任何显式 ID，第二道首步指纹比对必须在第 2 页立即识别出重复并熔断短路
+  assert.equal(rpcCalls, 2, '第 2 页首步指纹与第 1 页相同时，必须立即短路熔断，不应持续请求到第 5 页');
+  assert.equal(view.stepCount, 1000, '只收纳第 1 页的有效 1000 步');
+  assert.equal(view.isTruncated, false);
+});
+
+test('【阶段三集成测试 8】超长单次直退（第一道防线）：单次返回大于 PAGE_SIZE 判定服务端一次性全量吐出，收集后直接退出', async () => {
+  let rpcCalls = 0;
+  async function singleFullRpc(target, method, params) {
+    rpcCalls++;
+    return {
+      steps: Array.from({ length: 1500 }, (_, i) => ({
+        stepIndex: i,
+        type: StepType.PLANNER_RESPONSE,
+        plannerResponse: { response: `Step ${i}` }
+      }))
+    };
+  }
+
+  const view = await getContextSnapshot('mock-cascade-oversize-single', true, {
+    _ls: { port: 9999 },
+    _rpcCall: singleFullRpc
+  });
+
+  assert.equal(rpcCalls, 1, '第一道防线生效，一次性全量吐出时收集后直接 break，不发起第 2 页请求');
+  assert.equal(view.stepCount, 1500);
+  assert.equal(view.isTruncated, false);
+});
+
+test('【阶段三集成测试 9】并行工具调用具有相同 createdAt：防碰撞 stepKey 拼接页内下标，正常保留无误删', async () => {
+  const sharedTimestamp = '2026-11-09T10:00:00.123456789Z';
+  const parallelToolSteps = [
+    {
+      type: StepType.USER_INPUT,
+      userInput: { userResponse: '请帮我搜索并下载这三个文件' }
+    },
+    // 3 个并行发起的工具调用步骤，没有 stepIndex/id，时间戳完全相同
+    {
+      type: StepType.TOOL_CALL,
+      metadata: { createdAt: sharedTimestamp, toolCallOutputTokens: 200 }
+    },
+    {
+      type: StepType.TOOL_CALL,
+      metadata: { createdAt: sharedTimestamp, toolCallOutputTokens: 300 }
+    },
+    {
+      type: StepType.TOOL_CALL,
+      metadata: { createdAt: sharedTimestamp, toolCallOutputTokens: 400 }
+    }
+  ];
+
+  async function mockRpc(target, method, params) {
+    return { steps: parallelToolSteps };
+  }
+
+  const view = await getContextSnapshot('mock-cascade-parallel-tools', true, {
+    _ls: { port: 9999 },
+    _rpcCall: mockRpc
+  });
+
+  // 4 个步骤必须全部被保留，绝不能因为相同 createdAt 碰撞导致误杀
+  assert.equal(view.stepCount, 4, '4 个步骤（含 3 个相同 createdAt 的并行工具调用）必须全部保留');
+  assert.equal(view.ready, true);
+});
+
+test('【阶段三集成测试 10】跨页首步为同类型无文本步骤（如 Checkpoint 或仅含 ToolCall）且无显式 ID 时，第二道防线绝不误判碰撞，正常翻页', async () => {
+  let rpcCalls = 0;
+  // 第 0 页首步为 Checkpoint（100 inputTokens），共 1000 步
+  const page0Steps = [
+    {
+      type: StepType.CHECKPOINT,
+      metadata: {
+        modelUsage: { model: 'MODEL_PLACEHOLDER_M318', inputTokens: 100, outputTokens: 10, cacheReadTokens: 0, cacheCreationTokens: 0 }
+      }
+    },
+    ...Array.from({ length: 999 }, (_, i) => ({
+      type: StepType.PLANNER_RESPONSE,
+      plannerResponse: { response: `P0 Step ${i + 1}` }
+    }))
+  ];
+
+  // 第 1 页首步亦为 Checkpoint（5000 inputTokens），共 200 步
+  const page1Steps = [
+    {
+      type: StepType.CHECKPOINT,
+      metadata: {
+        modelUsage: { model: 'MODEL_PLACEHOLDER_M318', inputTokens: 5000, outputTokens: 50, cacheReadTokens: 0, cacheCreationTokens: 0 }
+      }
+    },
+    ...Array.from({ length: 199 }, (_, i) => ({
+      type: StepType.PLANNER_RESPONSE,
+      plannerResponse: { response: `P1 Step ${i + 1}` }
+    }))
+  ];
+
+  async function mockRpc(target, method, params) {
+    rpcCalls++;
+    if (params.startIndex === 0) return { steps: page0Steps };
+    if (params.startIndex === 1000) return { steps: page1Steps };
+    return { steps: [] };
+  }
+
+  const view = await getContextSnapshot('mock-cascade-checkpoints-across-pages', true, {
+    _ls: { port: 9999 },
+    _rpcCall: mockRpc
+  });
+
+  assert.equal(rpcCalls, 2, '两页均需正常拉取，第 2 页绝不能因为同为 CHECKPOINT 发生指纹误撞被阻断');
+  assert.equal(view.stepCount, 1200, '总步数应完整收纳两页合计 1200 步');
+  assert.equal(view.used, 5050, '以第 2 页末尾最新 Checkpoint 5000+50 为权威基准');
+});
+
+test('【阶段三集成测试 11】Protobuf 默认空字符串 id/modelApiContentId 时防碰撞 stepKey 正常回退，绝不发生误杀或仅剩 1 步', async () => {
+  const stepsWithEmptyId = Array.from({ length: 10 }, (_, i) => ({
+    id: '', // Protobuf 默认序列化空串
+    metadata: { modelApiContentId: '' },
+    type: StepType.PLANNER_RESPONSE,
+    plannerResponse: { response: `Empty ID Step ${i}` }
+  }));
+
+  async function mockRpc(target, method, params) {
+    return { steps: stepsWithEmptyId };
+  }
+
+  const view = await getContextSnapshot('mock-cascade-empty-id', true, {
+    _ls: { port: 9999 },
+    _rpcCall: mockRpc
+  });
+
+  assert.equal(view.stepCount, 10, '所有 10 个步骤必须全部保留，绝不能因为 id: "" 误判全碰撞导致只剩 1 步');
+});
+
+test('【阶段三集成测试 12】极端循环引用与畸形步骤对象：getStepFingerprint 安全提取且不同对象互不碰撞', () => {
+  const c1 = { type: StepType.USER_INPUT, userInput: { userResponse: '问答 1' } };
+  c1.self = c1;
+  const c2 = { type: StepType.USER_INPUT, userInput: { userResponse: '问答 2' } };
+  c2.self = c2;
+
+  const fp1 = getStepFingerprint(c1);
+  const fp2 = getStepFingerprint(c2);
+
+  assert.ok(fp1 && typeof fp1 === 'string');
+  assert.ok(fp2 && typeof fp2 === 'string');
+  assert.notEqual(fp1, fp2, '不同内容的循环引用对象指纹必须区分');
+
+  // 无文本且含循环引用的深层畸形对象
+  const c3 = { type: 'CUSTOM_TYPE', val: 123 };
+  c3.ref = c3;
+  const c4 = { type: 'CUSTOM_TYPE', val: 456 };
+  c4.ref = c4;
+
+  const fp3 = getStepFingerprint(c3);
+  const fp4 = getStepFingerprint(c4);
+  assert.ok(fp3 && typeof fp3 === 'string');
+  assert.ok(fp4 && typeof fp4 === 'string');
+  assert.notEqual(fp3, fp4, '不同属性值的无文本循环引用对象指纹不得碰撞为相同常数');
+});
+
+test('【静态架构审计】等长分页 + 权威总步数尾部窗口，禁止 PAGE_SIZE+1 与无限扫描', () => {
+  const code = readFileSync(resolve(__dirname, '../sidecars/ring/context-service.mjs'), 'utf8');
+
+  // 1. 禁止不可移植的 PAGE_SIZE+1 前瞻缝合
+  assert.ok(!code.includes('PAGE_SIZE + 1'), '严禁存在 PAGE_SIZE + 1 前瞻探针');
+  assert.ok(!code.includes('requestSize'), '严禁存在 requestSize 前瞻尺寸计算');
+  assert.ok(!code.includes('isWindowBoundary'), '严禁存在 isWindowBoundary 临界判定');
+
+  // 2. 禁止无上限扫描或旧式头尾缝合常量
+  assert.ok(!code.includes('MAX_SCAN_PAGES'), '严禁存在无上限 / 15 页扫描');
+  assert.ok(!code.includes('MAX_RETAINED_STEPS'), '严禁存在无约束保留量');
+  assert.ok(!code.includes('headConfigIdx'), '严禁存在 headConfigIdx 头尾缝合代码');
+
+  // 3. 确立对称等长分页、权威 stepCount 与尾部窗口
+  assert.ok(code.includes('const PAGE_SIZE = 1000;'), '必须固定 PAGE_SIZE = 1000');
+  assert.ok(code.includes('const MAX_PREFIX_PAGES = 5;'), '前缀扫描必须固定为 5 页');
+  assert.ok(code.includes('const TAIL_WINDOW_STEPS = 5000;'), '必须固定最新尾部窗口大小');
+  assert.ok(code.includes('endIndex: pageStart + PAGE_SIZE'), 'RPC 请求参数必须严格等长');
+  assert.ok(code.includes("stepCount"), '必须读取权威轨迹总步数');
+  assert.ok(code.includes('seenStepKeys'), '必须维护 seenStepKeys 集合');
+});
+
+test('【阶段三集成测试 13】真实调用 getContextSnapshot 的 1001 步跨页同时间戳测试：弱指纹移除后完整保留 1001 步且未截断', async () => {
+  let rpcCalls = 0;
+  const sameTimestamp = '2026-03-30T10:00:00.000Z';
+
+  // 1. 验证带 stepIndex 时的 1001 步跨页同时间戳场景
+  async function mockRpc(target, method, params) {
+    rpcCalls++;
+    if (params.startIndex === 0) {
+      // 第 0 页：1000 步，首步时间戳为 sameTimestamp
+      return {
+        steps: Array.from({ length: 1000 }, (_, i) => ({
+          stepIndex: i,
+          type: StepType.PLANNER_RESPONSE,
+          metadata: { createdAt: i === 0 ? sameTimestamp : `2026-03-30T10:00:${String(i % 60).padStart(2, '0')}.000Z` },
+          plannerResponse: { response: `Step ${i}` }
+        }))
+      };
+    }
+    if (params.startIndex === 1000) {
+      // 第 1 页：1 步（第 1001 步），其首步与第 0 页首步时间戳完全相同！
+      return {
+        steps: [
+          {
+            stepIndex: 1000,
+            type: StepType.PLANNER_RESPONSE,
+            metadata: { createdAt: sameTimestamp },
+            plannerResponse: { response: 'Step 1000' }
+          }
+        ]
+      };
+    }
+    return { steps: [] };
+  }
+
+  const view = await getContextSnapshot('mock-cascade-1001-steps', true, {
+    _ls: { port: 9999 },
+    _rpcCall: mockRpc
+  });
+
+  assert.equal(rpcCalls, 2, '必须正常发起第 2 页拉取');
+  assert.equal(view.stepCount, 1001, '1001 步必须被 100% 完整保留，绝不因弱指纹比对误判丢弃第 1 页');
+  assert.equal(view.lastStepIndex, 1000, '最后一步的 stepIndex 必须为 1000');
+  assert.equal(view.isTruncated, false, '单页返回 1 步小于 1000 属于正常结束，绝不能标记截断');
+  assert.ok(!view.tooltip.includes('截断'), 'tooltip 中不得含截断字样');
+
+  // 2. 深度断言：无 stepIndex/id 裸步骤时，首步同时间戳场景亦必须完整保留 1001 步，绝不因页内下标 _sIdx 碰撞丢弃第 1 页
+  let rpcCallsNoId = 0;
+  async function mockRpcNoId(target, method, params) {
+    rpcCallsNoId++;
+    if (params.startIndex === 0) {
+      return {
+        steps: Array.from({ length: 1000 }, (_, i) => ({
+          type: StepType.PLANNER_RESPONSE,
+          metadata: { createdAt: i === 0 ? sameTimestamp : `2026-03-30T10:00:${String(i % 60).padStart(2, '0')}.000Z` },
+          plannerResponse: { response: `Raw Step ${i}` }
+        }))
+      };
+    }
+    if (params.startIndex === 1000) {
+      return {
+        steps: [
+          {
+            type: StepType.PLANNER_RESPONSE,
+            metadata: { createdAt: sameTimestamp },
+            plannerResponse: { response: 'Raw Step 1000' }
+          }
+        ]
+      };
+    }
+    return { steps: [] };
+  }
+
+  const viewNoId = await getContextSnapshot('mock-cascade-1001-steps-no-id', true, {
+    _ls: { port: 9999 },
+    _rpcCall: mockRpcNoId
+  });
+
+  assert.equal(rpcCallsNoId, 2, '无 ID 步骤必须正常拉取第 2 页');
+  assert.equal(viewNoId.stepCount, 1001, '无 ID 步骤在首步时间戳相同时亦必须完整保留 1001 步');
+  assert.equal(viewNoId.isTruncated, false, '无 ID 步骤未被截断');
+});
+
+test('【阶段三集成测试 14】Bridge 请求归属与重注防碰撞、回传 cid 校验与拒写串台测试', async () => {
+  // 1. 验证 Bridge 脚本包含唯一的 bridgeInstId 且超时放宽至 8500ms
+  const bridgeCode = readFileSync(resolve(__dirname, '../sidecars/ring/runtime-bridge.mjs'), 'utf8');
+  assert.ok(bridgeCode.includes('bridgeInstId'), 'Bridge 脚本必须生成 bridgeInstId 实例唯一标识');
+  assert.ok(bridgeCode.includes('8500'), 'Bridge 请求超时预算必须放宽至 8500ms');
+
+  // 2. 验证 Node 端 handleBinding 回传带有 cid 并安全包裹 id 字符串
+  const cdp = new CdpConnection('ws://127.0.0.1:9999');
+  let evaluatedExpression = null;
+  cdp.command = async (method, params) => {
+    if (method === 'Runtime.evaluate') {
+      evaluatedExpression = params.expression;
+      return { result: {} };
+    }
+    return {};
+  };
+
+  await cdp.handleBinding({
+    executionContextId: 1,
+    payload: JSON.stringify({
+      id: 'br_test_1',
+      type: 'snapshot',
+      input: {
+        conversationId: 'cid-alpha-999',
+        force: true
+      }
+    })
+  });
+
+  assert.ok(evaluatedExpression, 'handleBinding 必须调用 Runtime.evaluate 回传结果');
+  assert.ok(evaluatedExpression.includes('window.__agContextRingBridge?.resolve("br_test_1"'), '回传 script 必须安全序列化字符串类型的 id');
+  assert.ok(evaluatedExpression.includes('"cid":"cid-alpha-999"') || evaluatedExpression.includes('"conversationId":"cid-alpha-999"'), '回传结果中必须包含入参的 conversationId / cid');
+
+  // 3. 验证 ring-widget.cjs 源码守卫防线
+  const widgetSource = readFileSync(resolve(__dirname, '../assets/ring-widget.cjs'), 'utf8');
+  assert.ok(widgetSource.includes('dataCid && dataCid !== lowerId'), 'setCachedSnapshot 必须检查 data 中的 cid 匹配');
+  assert.ok(widgetSource.includes('isCidMismatch'), 'syncPaneState 必须守卫 isCidMismatch');
+});
+
+test('【阶段三集成测试 15】DOM body 未就绪防半死状态机：守候 DOMContentLoaded 且成功后才标记 installed', () => {
+  const origWindow = globalThis.window;
+  const origDoc = globalThis.document;
+
+  const eventListeners = new Map();
+  const mockDoc = {
+    documentElement: {},
+    body: null, // 关键：模拟 DOM body 尚未就绪！
+    addEventListener: (evt, cb) => {
+      eventListeners.set(evt, cb);
+    },
+    removeEventListener: (evt) => {
+      eventListeners.delete(evt);
+    },
+    querySelectorAll: () => []
+  };
+
+  const mockWin = {
+    __agContextRingHost: { getSnapshot: async () => ({}) },
+    addEventListener: () => {},
+    removeEventListener: () => {}
+  };
+
+  globalThis.document = mockDoc;
+  globalThis.window = mockWin;
+
+  try {
+    // 首次调用：body 为 null
+    installAgContextRingWidget();
+
+    // 验证：由于 body 未就绪，绝不能提前将 installed 设为 true，否则 CDP 巡检会误判已就绪！
+    assert.equal(mockWin.__agContextRingInstalled, undefined, 'DOM body 未就绪时绝不能提前设置 __agContextRingInstalled = true');
+    assert.ok(eventListeners.has('DOMContentLoaded'), '必须将初始化逻辑挂载至 DOMContentLoaded 事件守候');
+
+    // 模拟 DOMContentLoaded 触发，DOM body 已就绪
+    const mockBody = {
+      querySelectorAll: () => [],
+      isConnected: true
+    };
+    mockDoc.body = mockBody;
+    globalThis.MutationObserver = class {
+      observe() {}
+      disconnect() {}
+    };
+
+    const domLoadedCb = eventListeners.get('DOMContentLoaded');
+    domLoadedCb();
+
+    // 此时 DOM body 就绪，mount 执行完毕，正式标记 installed = true
+    assert.equal(mockWin.__agContextRingInstalled, true, 'DOMContentLoaded 触发且 mount 成功后必须标记 __agContextRingInstalled = true');
+  } finally {
+    globalThis.window = origWindow;
+    globalThis.document = origDoc;
+    delete globalThis.MutationObserver;
+  }
+});
+
+test('【阶段三集成测试 16】连续回退时服务端未返回 contextEpoch：正常自增世代且防步数逆序拦截失效', () => {
+  const { shouldAcceptSnapshot } = installAgContextRingWidget;
+
+  // 初始快照：第 1 世代，步数 10
+  const existingEpoch1 = {
+    ready: true,
+    contextEpoch: 1,
+    lastStepIndex: 10,
+    used: 100_000
+  };
+
+  // 第 1 次回退：用户回退到第 5 步，服务端返回的数据不携带 contextEpoch
+  const rewind1 = {
+    ready: true,
+    lastStepIndex: 5,
+    used: 50_000,
+    _requestRevision: 1
+  };
+  const check1 = shouldAcceptSnapshot(existingEpoch1, rewind1, {
+    revision: 1,
+    lastCommittedRevision: 0
+  });
+
+  assert.equal(check1.accept, true, '第一次回退必须放行');
+  assert.equal(check1.isRewind, true, '必须识别为合法回退');
+  assert.equal(check1.nextEpoch, 2, '世代必须递增为 2');
+
+  // 模拟缓存保存了更新后的快照（世代变为 2，步数为 5）
+  const existingEpoch2 = {
+    ready: true,
+    contextEpoch: 2,
+    lastStepIndex: 5,
+    used: 50_000
+  };
+
+  // 第 2 次回退：用户再次回退到第 3 步，服务端返回的数据仍然不携带 contextEpoch
+  const rewind2 = {
+    ready: true,
+    lastStepIndex: 3,
+    used: 30_000,
+    _requestRevision: 2
+  };
+  const check2 = shouldAcceptSnapshot(existingEpoch2, rewind2, {
+    revision: 2,
+    lastCommittedRevision: 1
+  });
+
+  assert.equal(check2.accept, true, '第二次连续回退必须放行，绝不能因 incoming 未携带 contextEpoch 跳过分支');
+  assert.equal(check2.isRewind, true, '第二次连续回退必须同样识别为回退');
+  assert.equal(check2.nextEpoch, 3, '世代必须继续递增为 3');
+
+  // 对比测试：如果不是合法回退（例如没有递增的 revision，而是网络乱序到达的旧步数数据）
+  const outdatedStepData = {
+    ready: true,
+    lastStepIndex: 2,
+    used: 20_000
+  };
+  const checkReversal = shouldAcceptSnapshot(existingEpoch2, outdatedStepData, {
+    revision: 1,
+    lastCommittedRevision: 2
+  });
+
+  assert.equal(checkReversal.accept, false, '非回退的旧逆序数据必须坚决拦截');
+});
+
+test('【阶段三集成测试 17】卸载脚本 manage.mjs 与 uninstall.ps1 具备目录残留二次检查与非 0 退出防假成功', async () => {
+  const manageCode = readFileSync(resolve(__dirname, '../manage.mjs'), 'utf8');
+  assert.ok(manageCode.includes('existsSync(TARGET_DIR)'), 'manage.mjs 必须包含 existsSync(TARGET_DIR) 残留检查');
+  assert.ok(manageCode.includes('process.exit(1)'), 'manage.mjs 残留时必须执行 process.exit(1)');
+
+  const psCode = readFileSync(resolve(__dirname, '../uninstall.ps1'), 'utf8');
+  assert.ok(psCode.includes('Test-Path $targetDir'), 'uninstall.ps1 必须包含 Test-Path $targetDir 残留检查');
+  assert.ok(psCode.includes('exit 1'), 'uninstall.ps1 残留时必须执行 exit 1');
+
+  // 实机动态运行断言：当目录被占用无法删除时，manage.mjs 必须真实以非 0 状态码退出，绝不输出 [SUCCESS]
+  const execFileAsync = promisify(execFile);
+  const testLockedDir = resolve(__dirname, '../dist/test_integration_residue_dir');
+  await mkdir(testLockedDir, { recursive: true });
+
+  // 模拟被宿主占用的目录（锁定 cwd）
+  const locker = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { cwd: testLockedDir });
+  try {
+    let processExitedWithError = false;
+    let stdout = '';
+    let stderr = '';
+    try {
+      const res = await execFileAsync(process.execPath, [resolve(__dirname, '../manage.mjs'), 'uninstall'], {
+        env: { ...process.env, AGY_TEST_TARGET_DIR: testLockedDir }
+      });
+      stdout = res.stdout;
+    } catch (err) {
+      processExitedWithError = true;
+      stderr = err.stderr || '';
+    }
+    assert.equal(processExitedWithError, true, '目录残留时 manage.mjs 必须以非 0 状态码退出');
+    assert.ok(stderr.includes('仍有残留文件') || stderr.includes('ERROR'), 'stderr 必须输出残留文件错误信息');
+    assert.ok(!stdout.includes('[SUCCESS]'), '目录残留时绝不能误报 [SUCCESS]');
+  } finally {
+    locker.kill();
+    await new Promise(r => setTimeout(r, 400));
+    await rm(testLockedDir, { recursive: true, force: true }).catch(() => {});
+  }
 });

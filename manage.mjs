@@ -17,6 +17,43 @@ const PLUGINS_DIR = join(HOME, '.gemini', 'config', 'plugins');
 const TARGET_DIR = process.env.AGY_TEST_TARGET_DIR || join(PLUGINS_DIR, 'antigravity-context-ring');
 const CONFIG_FILE = process.env.AGY_TEST_CONFIG_FILE || join(HOME, '.gemini', 'config', 'config.json');
 
+const PLUGIN_KEY = 'antigravity-context-ring';
+
+const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+
+function normalizeConfigForWrite(config, file) {
+  if (!isRecord(config)) {
+    throw new Error(`配置文件必须是 JSON 对象；已停止写入并保留原文件: ${file}`);
+  }
+  if (config.plugins === undefined || config.plugins === null) {
+    config.plugins = {};
+  }
+  if (!isRecord(config.plugins)) {
+    throw new Error(`配置字段 plugins 必须是 JSON 对象；已停止写入并保留原文件: ${file}`);
+  }
+  if (config.plugins[PLUGIN_KEY] === null) {
+    config.plugins[PLUGIN_KEY] = {};
+  }
+  if (config.plugins[PLUGIN_KEY] !== undefined && !isRecord(config.plugins[PLUGIN_KEY])) {
+    throw new Error(`配置字段 plugins.${PLUGIN_KEY} 必须是 JSON 对象；已停止写入并保留原文件: ${file}`);
+  }
+  return config;
+}
+
+async function readJsonForWrite(file) {
+  if (!existsSync(file)) return {};
+  const text = await readFile(file, 'utf8');
+  const normalizedText = text.replace(/^\uFEFF/, '');
+  if (!normalizedText.trim()) return {};
+  let parsed;
+  try {
+    parsed = JSON.parse(normalizedText);
+  } catch {
+    throw new Error(`配置文件不是合法 JSON；已停止写入并保留原文件: ${file}`);
+  }
+  return normalizeConfigForWrite(parsed, file);
+}
+
 async function readJson(file, fallback = {}) {
   try {
     const text = await readFile(file, 'utf8');
@@ -39,7 +76,9 @@ async function install() {
   await mkdir(TARGET_DIR, { recursive: true });
 
   console.log('[2/4] 正在复制运行时模块...');
-  for (const item of ['assets', 'sidecars', 'plugin.json']) {
+  await mkdir(join(TARGET_DIR, 'assets'), { recursive: true });
+  await cp(join(SOURCE, 'assets', 'ring-widget.cjs'), join(TARGET_DIR, 'assets', 'ring-widget.cjs'), { force: true });
+  for (const item of ['sidecars', 'plugin.json']) {
     const src = join(SOURCE, item);
     const dst = join(TARGET_DIR, item);
     await cp(src, dst, { recursive: true, force: true });
@@ -47,9 +86,10 @@ async function install() {
 
   console.log('[3/4] 正在配置 config.json...');
   await mkdir(dirname(CONFIG_FILE), { recursive: true });
-  const config = await readJson(CONFIG_FILE, {});
+  const config = await readJsonForWrite(CONFIG_FILE);
   if (!config.plugins) config.plugins = {};
-  config.plugins['antigravity-context-ring'] = { enabled: true };
+  if (!config.plugins[PLUGIN_KEY]) config.plugins[PLUGIN_KEY] = {};
+  config.plugins[PLUGIN_KEY].enabled = true;
   await writeJson(CONFIG_FILE, config);
 
   const hostPids = await scanHostPids().catch(() => new Set());
@@ -85,10 +125,14 @@ async function uninstall() {
 
   console.log('[1/2] 正在禁用插件配置...');
   if (existsSync(CONFIG_FILE)) {
-    const config = await readJson(CONFIG_FILE, {});
-    if (config.plugins && config.plugins['antigravity-context-ring']) {
-      config.plugins['antigravity-context-ring'].enabled = false;
-      await writeJson(CONFIG_FILE, config);
+    try {
+      const config = await readJsonForWrite(CONFIG_FILE);
+      if (config.plugins && config.plugins[PLUGIN_KEY]) {
+        config.plugins[PLUGIN_KEY].enabled = false;
+        await writeJson(CONFIG_FILE, config);
+      }
+    } catch (err) {
+      console.warn(`[WARN] 配置文件无法安全解析，已跳过配置更新且未覆盖原文件: ${err.message}`);
     }
   }
   await new Promise(r => setTimeout(r, 600));
@@ -103,6 +147,10 @@ async function uninstall() {
         await new Promise(r => setTimeout(r, 500));
       }
     }
+  }
+  if (existsSync(TARGET_DIR)) {
+    console.error(`[ERROR] 插件目录清理失败，仍有残留文件: ${TARGET_DIR}`);
+    process.exit(1);
   }
   console.log('[SUCCESS] 卸载完成！重启 Antigravity 后界面即可恢复默认状态。');
 }
@@ -202,7 +250,10 @@ async function packageZip() {
   await rm(stageRoot, { recursive: true, force: true });
   await mkdir(stageDir, { recursive: true });
 
-  for (const item of ['assets', 'sidecars', 'plugin.json', 'install.ps1', 'uninstall.ps1', 'install.sh', 'uninstall.sh', 'manage.mjs', 'README.md']) {
+  await mkdir(join(stageDir, 'assets'), { recursive: true });
+  await cp(join(SOURCE, 'assets', 'ring-widget.cjs'), join(stageDir, 'assets', 'ring-widget.cjs'), { force: true });
+
+  for (const item of ['sidecars', 'plugin.json', 'install.ps1', 'uninstall.ps1', 'install.sh', 'uninstall.sh', 'manage.mjs', 'README.md']) {
     const p = join(SOURCE, item);
     if (existsSync(p)) {
       await cp(p, join(stageDir, item), { recursive: true });

@@ -5,6 +5,7 @@ import { processTrajectorySteps, StepType, normalizeModelId, COMPRESSION_MIN_DRO
 import { getPlatformTruncationLimit, isKnownModel } from '../sidecars/ring/model-limits.mjs';
 import { formatContextResult } from '../sidecars/ring/context-service.mjs';
 import installAgContextRingWidget from '../assets/ring-widget.cjs';
+import { readFileSync } from 'node:fs';
 
 const { normalizeSnapshotSchema, shouldAcceptSnapshot, inferClientModelLimit, getRingColor } = installAgContextRingWidget;
 
@@ -129,7 +130,7 @@ test('【回归 3】formatContextResult: 告警优先级必须严格遵循 平�
     compressionDetected: false,
     isTruncated: true
   });
-  assert.match(truncatedOnly.tooltip, /会话超长已截断/);
+  assert.match(truncatedOnly.tooltip, /会话数据不完整/);
 });
 
 test('【回归 4】normalizeSnapshotSchema: 完整保留 isTruncated 与 isUnknownModel 状态字段', () => {
@@ -1051,4 +1052,126 @@ test('【回归 12】三道防线体系 (Three-Tier Defense)：跨模型载荷�
   const r6 = processTrajectorySteps(missingModelSteps);
   assert.equal(r6.compressionDetected, true, '中间步缺失 model 字段应继承上一有效模型，后续同模型真实压缩正常捕获');
   assert.equal(r6.compressionDrop, 62_000);
+});
+
+test('【回归 13】无显式 USER_INPUT planModel 时跨模型切换：分母动态跟随最新 checkpointModel 且免疫中间步空模型名', () => {
+  // 场景 A：首轮使用 Claude 3.7 Sonnet (160K)，次轮切换至 GPT-OSS 120B (80K)
+  const switchedSteps = [
+    {
+      type: StepType.CHECKPOINT,
+      metadata: {
+        modelUsage: {
+          model: 'Claude-3.7-Sonnet',
+          inputTokens: 60_000,
+          outputTokens: 1_000
+        }
+      }
+    },
+    {
+      type: StepType.CHECKPOINT,
+      metadata: {
+        modelUsage: {
+          model: 'GPT-OSS-120B',
+          inputTokens: 40_000,
+          outputTokens: 500
+        }
+      }
+    }
+  ];
+
+  const calcSwitched = processTrajectorySteps(switchedSteps);
+  assert.equal(calcSwitched.checkpointModel, 'GPT-OSS-120B', '最新快照模型必须更新为 GPT-OSS-120B');
+  assert.equal(calcSwitched.contextLimit, 80_000, '无显式 USER_INPUT 锁定时，分母必须跟随最新 checkpointModel 切换为 80K，不得被首轮 160K 锁死');
+
+  // 场景 B：后续 PLANNER_RESPONSE 步骤的 modelUsage.model 为空字符串时，不得冲掉已有的 checkpointModel
+  const emptyModelFollowUpSteps = [
+    ...switchedSteps,
+    {
+      type: StepType.PLANNER_RESPONSE,
+      metadata: {
+        modelUsage: {
+          model: '',
+          inputTokens: 45_000,
+          outputTokens: 600
+        }
+      }
+    }
+  ];
+
+  const calcEmptyFollowUp = processTrajectorySteps(emptyModelFollowUpSteps);
+  assert.equal(calcEmptyFollowUp.checkpointModel, 'GPT-OSS-120B', '中间步骤空 model 字段不得清空已记录的 checkpointModel');
+  assert.equal(calcEmptyFollowUp.contextLimit, 80_000, '分母必须继续保持 80K 而不是回退到默认 256K');
+});
+
+test('【回归 14】首轮显式 planModel 后切换模型但新 USER_INPUT 无配置：分母必须由后续权威 Checkpoint 重新锚定', () => {
+  const steps = [
+    {
+      stepIndex: 0,
+      type: StepType.USER_INPUT,
+      userInput: {
+        userResponse: '首轮使用 Pro',
+        userConfig: { plannerConfig: { planModel: 'MODEL_PLACEHOLDER_M16' } }
+      }
+    },
+    {
+      stepIndex: 1,
+      type: StepType.CHECKPOINT,
+      metadata: {
+        modelUsage: {
+          model: 'MODEL_PLACEHOLDER_M16',
+          inputTokens: 60_000,
+          outputTokens: 1_000
+        }
+      }
+    },
+    {
+      stepIndex: 2,
+      type: StepType.USER_INPUT,
+      userInput: { userResponse: '切到 GPT-OSS 继续，但该回合没有 plannerConfig' }
+    },
+    {
+      stepIndex: 3,
+      type: StepType.INVOKE_SUBAGENT,
+      metadata: { generatorModel: 'MODEL_PLACEHOLDER_M318', toolCallOutputTokens: 2_000 }
+    },
+    {
+      stepIndex: 4,
+      type: StepType.CHECKPOINT,
+      metadata: {
+        modelUsage: {
+          model: 'MODEL_OPENAI_GPT_OSS_120B_MEDIUM',
+          inputTokens: 40_000,
+          outputTokens: 500
+        }
+      }
+    }
+  ];
+
+  const result = processTrajectorySteps(steps);
+  assert.equal(result.selectedModel, 'MODEL_OPENAI_GPT_OSS_120B_MEDIUM', '新回合无显式配置时，分母必须由该回合 Checkpoint 重新锚定');
+  assert.equal(result.checkpointModel, 'MODEL_OPENAI_GPT_OSS_120B_MEDIUM');
+  assert.equal(result.contextLimit, 80_000, '切到 GPT-OSS 后必须使用 80K，而不是继续锁死旧的 Pro 128K');
+  assert.equal(result.contextUsed, 40_500, '最新权威水位必须来自 GPT-OSS Checkpoint');
+  assert.equal(result.usageRatio, 40_500 / 80_000);
+});
+
+test('【回归 15】会话识别失败不得伪装成新草稿 0%', () => {
+  const widgetSource = readFileSync(new URL('../assets/ring-widget.cjs', import.meta.url), 'utf8');
+  assert.ok(!widgetSource.includes('if (!view) return true;'), '找不到 conversation view 时绝不能直接判定为草稿');
+  assert.match(widgetSource, /if \(!view\) return false;/, '识别失败必须与确认的草稿态分离');
+  assert.match(widgetSource, /getUnresolvedSnapshot\(\)/, 'CID 无法解析时必须渲染明确的识别失败状态');
+  assert.doesNotMatch(
+    widgetSource,
+    /if \(!cid\) \{\s*inst\.consecutiveFailures = 0;\s*updatePaneView\(inst, getDraftSnapshot/,
+    'CID 缺失不得继续回退为 0% 新会话'
+  );
+});
+
+test('【回归 16】PowerShell 配置更新必须兼容已存在的空插件对象 {}', () => {
+  const installPs = readFileSync(new URL('../install.ps1', import.meta.url), 'utf8');
+  const uninstallPs = readFileSync(new URL('../uninstall.ps1', import.meta.url), 'utf8');
+
+  assert.match(installPs, /PSObject\.Properties\['enabled'\]/, '安装脚本写 enabled 前必须检查属性是否存在');
+  assert.match(installPs, /Add-Member -NotePropertyName 'enabled'/, '空插件对象必须通过 Add-Member 增加 enabled');
+  assert.match(uninstallPs, /Add-Member -NotePropertyName 'enabled' -NotePropertyValue \$false/, '卸载脚本对空插件对象同样必须 Add-Member enabled=false');
 });

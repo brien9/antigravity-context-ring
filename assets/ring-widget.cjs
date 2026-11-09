@@ -82,6 +82,10 @@ var __agRingCacheModule = (function() {
       compressionDrop: data.compressionDrop || 0,
       isOverLimit: !!data.isOverLimit,
       isTruncated: !!data.isTruncated,
+      isWindowed: !!data.isWindowed,
+      stepCount: (typeof data.stepCount === 'number') ? data.stepCount : 0,
+      totalSteps: (typeof data.totalSteps === 'number') ? data.totalSteps : 0,
+      windowStartStep: (typeof data.windowStartStep === 'number') ? data.windowStartStep : 0,
       isUnknownModel: !!data.isUnknownModel,
       tooltip: data.tooltip || ''
     };
@@ -137,7 +141,7 @@ var __agRingCacheModule = (function() {
     // 4. 同世代未发生新压缩时，步数逆序数据拦截（若携带严格递增的新请求修订号且非纯前端粗估，判定为用户回退/编辑历史消息，放行并自增世代）
     if (existing && !isNewlyCompressed && typeof existing.lastStepIndex === 'number' && typeof incoming.lastStepIndex === 'number') {
       const epochExisting = typeof existing.contextEpoch === 'number' ? existing.contextEpoch : 1;
-      const epochIncoming = typeof incoming.contextEpoch === 'number' ? incoming.contextEpoch : 1;
+      const epochIncoming = typeof incoming.contextEpoch === 'number' ? incoming.contextEpoch : epochExisting;
       if (epochExisting === epochIncoming && incoming.lastStepIndex < existing.lastStepIndex) {
         const hasNewerRevision = revision !== null && revision > lastCommitted;
         const isAuthoritativeRewind = (hasNewerRevision && incoming.source !== 'fiber-estimate') || !!incoming.isRewind || !!options.allowRewind;
@@ -210,13 +214,12 @@ function installAgContextRingWidget() {
       orphan.remove();
     }
   }
-  if (!document.documentElement) {
+  if (!document.documentElement || !document.body) {
     document.addEventListener('DOMContentLoaded', installAgContextRingWidget, { once: true });
     return;
   }
   if (!window.__agContextRingHost) return;
 
-  window.__agContextRingInstalled = true;
   const ID = 'ag-context-ring-container';
   const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -298,10 +301,15 @@ function installAgContextRingWidget() {
   const setCachedSnapshot = (cid, data, options = {}) => {
     if (!cid || !data) return false;
     const lowerId = cid.toLowerCase();
+    const dataCid = (data.cid || data.conversationId || '').toLowerCase();
+    if (dataCid && dataCid !== lowerId) {
+      return false; // 坚决拒写 L1/L2 缓存并丢弃，防止跨会话串台
+    }
 
     const existing = getCachedSnapshot(lowerId);
     const lastCommitted = sessionCommittedRevisions.get(lowerId) || 0;
     const check = shouldAcceptSnapshot(existing, data, {
+      ...options,
       revision: options.revision,
       lastCommittedRevision: lastCommitted
     });
@@ -344,29 +352,42 @@ function installAgContextRingWidget() {
     return true;
   };
 
-  // 统一会话请求 Promise 合并（区分普通轮询与 force 穿透刷新；无缝原子生命周期管理，避免重复 RPC 冲刷）
+  // 统一会话请求 Promise 合并：普通同提示请求直接复用；force 或模型提示变化时只追跑一次，且始终采用最新 options
   const inFlightRequests = new Map();
+  const getRequestModelSignature = (options = {}) => {
+    const normalize = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
+    return `${normalize(options.selectedModel)}|${normalize(options.fallbackModel)}`;
+  };
+
   function fetchSnapshotDeduped(cid, options = {}) {
     if (!cid) return Promise.resolve(null);
     const lowerId = cid.toLowerCase();
     const isForce = !!options.force;
+    const requestModelSig = getRequestModelSignature(options);
 
     const existing = inFlightRequests.get(lowerId);
     if (existing) {
-      // 飞行中的请求已经是 force 穿透请求，或者新请求只是普通请求，可安全复用
-      if (existing.isForce || !isForce) {
-        return existing.promise;
+      // 若已有追跑请求，应与追跑请求而不是原始请求比较，避免模型来回切换时把最新提示吞掉
+      const activeOptions = existing.followUpPromise ? existing.followUpOptions : existing.options;
+      const activePromise = existing.followUpPromise || existing.promise;
+      const activeIsForce = existing.followUpPromise ? !!activeOptions?.force : existing.isForce;
+      const sameModelHint = getRequestModelSignature(activeOptions) === requestModelSig;
+      if (sameModelHint && (activeIsForce || !isForce)) {
+        return activePromise;
       }
-      // 飞行中的只是普通请求，而新来的是 force 强制刷新：
-      // 单例挂载后续追跑 Promise，无论连续调用多少次 force，严格只追跑一次，且使用最新 options 返回追跑结果
-      existing.followUpOptions = { ...options, force: true };
+
+      // 同 CID 但 force 等级或模型提示不同：只保留一个追跑 Promise，后续调用持续更新为最新 options
+      const followUpForce = activeIsForce || isForce;
+      existing.followUpOptions = { ...options };
+      if (followUpForce) existing.followUpOptions.force = true;
+      else delete existing.followUpOptions.force;
       if (!existing.followUpPromise) {
         const followUp = (async () => {
           try {
             await existing.promise;
           } catch {}
           try {
-            return await executeRpc(lowerId, existing.followUpOptions || { ...options, force: true });
+            return await executeRpc(lowerId, existing.followUpOptions || { ...options, force: isForce });
           } finally {
             const curr = inFlightRequests.get(lowerId);
             if (curr && curr.promise === followUp) {
@@ -395,16 +416,21 @@ function installAgContextRingWidget() {
         const res = await window.__agContextRingHost.getSnapshot({ conversationId: lowerId, ...options });
         if (res && typeof res === 'object') {
           res._requestRevision = reqRevision;
+          const returnedCid = (res.cid || res.conversationId || '').toLowerCase();
+          if (returnedCid && returnedCid !== lowerId) {
+            return null; // 返回的会话 ID 与发起请求的会话 ID 不符，坚决丢弃，防止串台
+          }
         }
         return res;
       } finally {
         const curr = inFlightRequests.get(lowerId);
         if (curr && curr.promise === reqPromise) {
           if (curr.followUpPromise) {
-            // 平滑原子交接：有 followUpPromise 时提升为主力，防止微秒间隙丢失在途状态
+            // 平滑原子交接：有 followUpPromise 时提升为主力，并保留最新模型提示与真实 force 等级
             inFlightRequests.set(lowerId, {
               promise: curr.followUpPromise,
-              isForce: true,
+              options: curr.followUpOptions,
+              isForce: !!curr.followUpOptions?.force,
               followUpPromise: null
             });
           } else {
@@ -414,7 +440,7 @@ function installAgContextRingWidget() {
       }
     })();
 
-    inFlightEntry = { promise: reqPromise, isForce, followUpPromise: null };
+    inFlightEntry = { promise: reqPromise, options: { ...options }, isForce, followUpPromise: null };
     inFlightRequests.set(lowerId, inFlightEntry);
     return reqPromise;
   }
@@ -447,10 +473,11 @@ function installAgContextRingWidget() {
   function extractPaneModelHint(targetBox, modelEl) {
     const el = modelEl || targetBox?.querySelector?.('[data-testid="model-selector-trigger"],button[aria-label*="选择模型"],button[aria-label*="Select model"]');
     if (!el) return '';
-    const text = (typeof el.textContent === 'string' ? el.textContent : '').trim();
+    const rawText = (typeof el.textContent === 'string' ? el.textContent : '').trim();
+    const text = rawText.replace(/^(?:选择模型|select model)\s*[:：-]?\s*/i, '').trim();
     if (text) return text;
     const aria = (typeof el.getAttribute === 'function' ? (el.getAttribute('aria-label') || '') : '').trim();
-    return aria;
+    return aria.replace(/^(?:选择模型|select model)\s*[:：-]?\s*/i, '').trim();
   }
 
   function getDraftSnapshot(targetBox, modelEl) {
@@ -468,6 +495,13 @@ function installAgContextRingWidget() {
       limitK,
       tooltip: `0.0% · 0.0K / ${limitK} 上下文已使用`,
       isDraft: true,
+    };
+  }
+
+  function getUnresolvedSnapshot() {
+    return {
+      ready: false,
+      tooltip: '无法识别当前会话，正在等待宿主加载'
     };
   }
 
@@ -561,8 +595,14 @@ function installAgContextRingWidget() {
     let hops = 0;
     while (scope && scope !== document.body && scope !== document.documentElement) {
       if (++hops > 32) break;
-      if (scope.matches?.('[data-testid="conversation-view"]')) return readId(scope);
-      if (scope.hasAttribute?.('data-cascade-id')) return readId(scope);
+      if (scope.matches?.('[data-testid="conversation-view"]')) {
+        const id = readId(scope);
+        if (id) return id;
+      }
+      if (scope.hasAttribute?.('data-cascade-id')) {
+        const id = readId(scope);
+        if (id) return id;
+      }
       scope = scope.parentElement;
     }
 
@@ -581,22 +621,29 @@ function installAgContextRingWidget() {
   function isDraftView(targetBox, totalPaneCount = paneInstances.size || 1) {
     const box = targetBox || document.querySelector('[data-testid="agent-input-box"]');
     const rawCid = extractRawConversationId(box, totalPaneCount);
-    // 关键守卫：若该分屏会话在本地有已有缓存快照，绝对不是草稿态！
-    if (rawCid && getCachedSnapshot(rawCid)) {
+    // 关键守卫：若该分屏会话已识别出有效会话 ID，绝对不是草稿态！
+    if (rawCid) {
       return false;
     }
 
     // 方案 B 一等公民：优先直接从该分屏 React Fiber 的 agentStateProvider 获取总步骤或回合数
     const ctx = getReactCascadeContext(box);
     const provider = ctx?.state?.agentStateProvider;
+    let hasFiberState = false;
     if (provider && typeof provider.getState === 'function') {
       try {
         const state = provider.getState();
-        if (state) {
+        if (state && typeof state === 'object') {
+          hasFiberState = true;
           const stepsLen = state.trajectorySlice?.totalStepsLength;
           if (typeof stepsLen === 'number' && stepsLen > 0) return false;
           if (Array.isArray(state.turns) && state.turns.length > 0) return false;
-          if (stepsLen === 0 && (!state.turns || state.turns.length === 0) && !rawCid) {
+          const isExplicitEmptyTurns = Array.isArray(state.turns) && state.turns.length === 0;
+          if (
+            (stepsLen === 0 || (stepsLen === undefined && (state.conversationId === null || state.conversationId === '' || isExplicitEmptyTurns))) &&
+            (!state.turns || state.turns.length === 0) &&
+            !rawCid
+          ) {
             return true;
           }
         }
@@ -606,21 +653,40 @@ function installAgContextRingWidget() {
     // 降级兜底：基于该分屏自身 DOM 视图的细粒度判定
     if (!box?.isConnected) return false;
 
+    const welcomeTextRe = /今天有什么|我们可以一起完成|what can (we|I) (help|accomplish|do)|开始新会话|准备好提问/i;
+    const welcomeSelector = '[data-testid*="starter"],[data-testid*="empty"],[data-testid*="welcome"],[data-testid*="suggested"],[data-testid*="greeting"],[data-testid*="hero"],[data-testid*="banner"]';
+    const realTurnSelector = '[data-testid="user-input-step"],[data-testid="agent-turn"],[data-testid="turn-card"],[data-testid="step-item"]';
+
     let view = box.closest?.('[data-testid="conversation-view"]');
     if (!view) {
       let p = box.parentElement;
       while (p && p !== document.body) {
-        if (p.matches?.('[data-testid*="conversation"], [data-testid*="chat"]')) {
+        if (p.matches?.('[data-testid*="conversation"], [data-testid*="chat"], [data-testid*="welcome"], [data-testid*="starter"], [data-testid*="empty"]')) {
+          view = p;
+          break;
+        }
+        if (p.querySelector?.(welcomeSelector) || welcomeTextRe.test(p.textContent || '')) {
+          view = p;
+          break;
+        }
+        if (p.parentElement === document.body && !hasFiberState) {
           view = p;
           break;
         }
         p = p.parentElement;
       }
     }
-    if (!view) return true;
+    // 找不到会话视图只能证明“识别失败”，不能反推为草稿。
+    // 若宿主 DOM 升级或历史视图尚未挂载，伪造成新会话 0% 比暂时不显示更误导。
+    if (!view) return false;
 
     const isWelcomeOrStarter = (el) => {
-      return !!el.closest?.('[data-testid*="starter"],[data-testid*="empty"],[data-testid*="welcome"],[data-testid*="suggested"],[data-testid*="greeting"]');
+      if (!el) return false;
+      if (el.matches?.(realTurnSelector) || el.querySelector?.(realTurnSelector)) return false;
+      if (el.closest?.(welcomeSelector)) return true;
+      const text = (el.textContent || '').trim();
+      if (text.length <= 160 && welcomeTextRe.test(text)) return true;
+      return false;
     };
 
     const hasAnyRealTurn = (selectors) => {
@@ -640,14 +706,25 @@ function installAgContextRingWidget() {
       const children = turnsContainer.children;
       for (let i = 0; i < children.length; i++) {
         const el = children[i];
-        if (!isWelcomeOrStarter(el) && isVisible(el)) return false;
+        if (el.querySelector?.(realTurnSelector)) {
+          return false;
+        }
+        if (!isWelcomeOrStarter(el) && isVisible(el)) {
+          if (el.matches?.('[data-testid*="turn"],[data-testid*="step"]') || el.getAttribute?.('role') === 'article') {
+            return false;
+          }
+        }
       }
     }
 
     const articles = view.querySelectorAll('[role="article"]');
     for (let i = 0; i < articles.length; i++) {
       const el = articles[i];
-      if (!box.contains(el) && !isWelcomeOrStarter(el) && isVisible(el)) return false;
+      if (!box.contains(el) && !isWelcomeOrStarter(el) && isVisible(el)) {
+        if (el.querySelector?.('[data-testid="user-input-step"], [data-testid="agent-turn"], [data-testid="turn-card"]') || el.matches?.('[data-testid*="turn"]')) {
+          return false;
+        }
+      }
     }
 
     return true;
@@ -762,6 +839,8 @@ function installAgContextRingWidget() {
         currentData.compressionDetected === data.compressionDetected &&
         currentData.isOverLimit === data.isOverLimit &&
         currentData.isTruncated === data.isTruncated &&
+        currentData.isWindowed === data.isWindowed &&
+        currentData.totalSteps === data.totalSteps &&
         currentData.isUnknownModel === data.isUnknownModel &&
         currentData.tooltip === data.tooltip) {
       return;
@@ -844,12 +923,15 @@ function installAgContextRingWidget() {
       } else if (data.compressionDetected) {
         const dropK = data.compressionDrop ? `${(data.compressionDrop / 1000).toFixed(1)}K` : '5.0K+';
         tip = `${baseInfo} 上下文已压缩 释放 ${dropK}`;
-      } else if (data.isTruncated) {
-        tip = `${baseInfo} 会话超长已截断`;
+      } else if (data.isTruncated && !data.isWindowed) {
+        tip = `${baseInfo} 会话数据不完整`;
       } else if (data.isUnknownModel) {
         tip = `${baseInfo} 未知模型限制 默认256K`;
       } else if (!tip) {
         tip = `${baseInfo} 上下文已使用`;
+      }
+      if (data.isWindowed && typeof tip === 'string' && !tip.includes('长会话尾部')) {
+        tip += ` · 长会话尾部 ${data.stepCount || data.totalSteps || 0}/${data.totalSteps || 0} 步`;
       }
     }
     tooltipText.textContent = tip;
@@ -885,6 +967,7 @@ function installAgContextRingWidget() {
     if (isDraftView(inst.box, totalPanes)) {
       inst.lastConversationId = null;
       inst.currentData = null;
+      inst.consecutiveFailures = 0;
       updatePaneView(inst, getDraftSnapshot(inst.box, inst.model), true);
       scheduleNextPaneSync(inst, 5000);
       return;
@@ -896,7 +979,8 @@ function installAgContextRingWidget() {
     if (cid !== inst.lastConversationId) {
       inst.lastConversationId = cid;
       if (!cid) {
-        updatePaneView(inst, getDraftSnapshot(inst.box, inst.model));
+        inst.consecutiveFailures = 0;
+        updatePaneView(inst, getUnresolvedSnapshot(), true);
         scheduleNextPaneSync(inst, 5000);
         return;
       }
@@ -920,7 +1004,8 @@ function installAgContextRingWidget() {
     }
 
     if (!cid) {
-      updatePaneView(inst, getDraftSnapshot(inst.box, inst.model));
+      inst.consecutiveFailures = 0;
+      updatePaneView(inst, getUnresolvedSnapshot(), true);
       scheduleNextPaneSync(inst, 5000);
       return;
     }
@@ -930,48 +1015,53 @@ function installAgContextRingWidget() {
     let data = null;
     try {
       const modelHint = extractPaneModelHint(inst.box, inst.model);
-      const modelChanged = inst.lastModelHint !== undefined && modelHint !== inst.lastModelHint;
       inst.lastModelHint = modelHint;
-      const baseOptions = modelChanged ? { ...syncOptions, force: true } : syncOptions;
-      const reqOptions = modelHint ? { ...baseOptions, fallbackModel: modelHint } : baseOptions;
+      // 历史会话的纯下拉变化只更新 fallback 提示；force 仅由真实 agent 状态变化等调用方显式触发
+      const reqOptions = modelHint ? { ...syncOptions, fallbackModel: modelHint } : syncOptions;
       data = await fetchSnapshotDeduped(cid, reqOptions);
     } catch {
       // 网络或桥接异常交由下方离线守卫处理
-    } finally {
-      scheduleNextPaneSync(inst);
     }
 
-    // 架构解耦 1：缓存写入控制（任何分屏拉回的有效数据立即写入该会话缓存，并联动通知同会话分屏）
-    if (data && data.ready) {
-      setCachedSnapshot(cid, data);
-    }
+    try {
+      // 架构解耦 1：缓存写入控制（任何分屏拉回的有效数据校验 cid 匹配后立即写入缓存）
+      const returnedCid = (data?.cid || data?.conversationId || '').toLowerCase();
+      const isCidMismatch = !!(returnedCid && returnedCid !== cid.toLowerCase());
 
-    // 架构解耦 2：分屏独立 UI 更新控制
-    if (!inst.box?.isConnected || !paneInstances.has(inst.box)) return;
-    if (seq !== inst.fetchSeq) return;
-    const currentTotal = paneInstances.size || 1;
-    if (getActiveConversationId(inst.box, currentTotal) !== cid) return;
-    if (isDraftView(inst.box, currentTotal)) return;
-
-    if (data && data.ready) {
-      inst.consecutiveFailures = 0;
-      updatePaneView(inst, getCachedSnapshot(cid) || data);
-    } else {
-      inst.consecutiveFailures++;
-      const fallbackSnap = getCachedSnapshot(cid) || getFiberQuickEstimate(inst.box, cid, inst.model);
-      if (fallbackSnap) {
-        if (!inst.currentData || !inst.currentData.ready || inst.currentData.isPending || inst.currentData.isDraft) {
-          updatePaneView(inst, fallbackSnap);
-        }
-        updatePaneView(inst, { ready: false, offline: true });
-      } else {
-        updatePaneView(inst, {
-          ready: true,
-          isPending: true,
-          ratio: 0.15,
-          tooltip: '正在等待上下文服务响应 (离线)...'
-        });
+      if (data && data.ready && !isCidMismatch) {
+        setCachedSnapshot(cid, data);
       }
+
+      // 架构解耦 2：分屏独立 UI 更新控制
+      if (!inst.box?.isConnected || !paneInstances.has(inst.box)) return;
+      if (seq !== inst.fetchSeq) return;
+      const currentTotal = paneInstances.size || 1;
+      if (getActiveConversationId(inst.box, currentTotal) !== cid) return;
+      if (isDraftView(inst.box, currentTotal)) return;
+
+      if (data && data.ready && !isCidMismatch) {
+        inst.consecutiveFailures = 0;
+        updatePaneView(inst, getCachedSnapshot(cid) || data);
+      } else {
+        inst.consecutiveFailures++;
+        const fallbackSnap = getCachedSnapshot(cid) || getFiberQuickEstimate(inst.box, cid, inst.model);
+        if (fallbackSnap) {
+          if (!inst.currentData || !inst.currentData.ready || inst.currentData.isPending || inst.currentData.isDraft) {
+            updatePaneView(inst, fallbackSnap);
+          }
+          updatePaneView(inst, { ready: false, offline: true });
+        } else {
+          updatePaneView(inst, {
+            ready: true,
+            isPending: true,
+            ratio: 0.15,
+            tooltip: '正在等待上下文服务响应 (离线)...'
+          });
+        }
+      }
+    } finally {
+      // 在最新失败计数结算后调度；所有提前返回也统一经过这里，确保恰好一次且不残留旧闹钟
+      scheduleNextPaneSync(inst);
     }
   }
 
@@ -1042,7 +1132,7 @@ function installAgContextRingWidget() {
       if (inst.node && inst.node.isConnected && flexContainer?.contains(inst.node) && inst.node.previousElementSibling === modelBranch) {
         bindPaneAgentStateListener(inst);
         if (modelHintChanged) {
-          syncPaneState(inst, { force: true });
+          syncPaneState(inst);
         }
         return inst;
       }
@@ -1230,7 +1320,7 @@ function installAgContextRingWidget() {
       if (!cid) {
         inst.lastConversationId = null;
         inst.currentData = null;
-        updatePaneView(inst, getDraftSnapshot(box, model), true);
+        updatePaneView(inst, getUnresolvedSnapshot(), true);
       } else {
         const cached = getCachedSnapshot(cid);
         if (cached) {
@@ -1251,8 +1341,8 @@ function installAgContextRingWidget() {
       }
     }
 
-    // 新挂载或重挂载分屏立即触发一次后台校准（若伴随模型切换则强制穿透）并建立独立轮询周期
-    syncPaneState(inst, modelHintChanged ? { force: true } : {});
+    // 新挂载或重挂载分屏立即触发一次普通后台校准；历史分母由真实轨迹驱动，草稿直接本地重算
+    syncPaneState(inst);
     return inst;
   }
 
@@ -1326,6 +1416,8 @@ function installAgContextRingWidget() {
   observer.observe(document.body, { childList: true, subtree: true, characterData: true });
 
   mount();
+
+  window.__agContextRingInstalled = true;
 
   window.__agContextRingDispose = () => {
     if (mountDebounceTimer) {

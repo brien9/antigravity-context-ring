@@ -145,6 +145,9 @@ export function processTrajectorySteps(steps = [], options = {}) {
       cacheCreationTokens: 0,
       isUnknownModel: !known && !!emptyModel,
       isTruncated,
+      isWindowed: false,
+      totalSteps: 0,
+      windowStartStep: 0,
     };
   }
 
@@ -155,6 +158,10 @@ export function processTrajectorySteps(steps = [], options = {}) {
   let selectedModel = initialSelected;
   let executionModel = '';
   let checkpointModel = '';
+  // 本轮 USER_INPUT 未显式指定模型时，允许紧随其后的权威 Checkpoint 重新锚定分母，
+  // 修复“首轮显式锁定后，后续切模型但仍沿用旧分母”的混合路径。
+  let awaitingCheckpointModelReanchor = false;
+  let latestUserInputIndex = -1;
 
   let lastModelUsage = null;
   let usageSource = 'none'; // 'checkpoint' | 'planner' | 'estimated'
@@ -232,9 +239,20 @@ export function processTrajectorySteps(steps = [], options = {}) {
     lastCheckpointStepIndex = currentStepIndex;
   };
 
+  let maxStepIndex = -1;
+
   for (let idx = 0; idx < steps.length; idx++) {
     const step = steps[idx];
     if (!step || typeof step !== 'object') continue;
+
+    // 轨迹分页可能只返回尾部窗口，必须保留服务端真实步号，不能拿数组下标冒充。
+    const baseStepOffset = (Number.isSafeInteger(options.windowStartStep) && options.windowStartStep > 0)
+      ? options.windowStartStep
+      : 0;
+    const actualStepIndex = (Number.isSafeInteger(step.stepIndex) && step.stepIndex >= 0)
+      ? step.stepIndex
+      : baseStepOffset + idx;
+    if (actualStepIndex > maxStepIndex) maxStepIndex = actualStepIndex;
 
     const stepType = step.type || '';
     const meta = step.metadata;
@@ -258,8 +276,13 @@ export function processTrajectorySteps(steps = [], options = {}) {
       const userConfig = ui?.userConfig;
       const plannerConfig = userConfig?.plannerConfig;
       const selected = plannerConfig?.planModel || plannerConfig?.modelName;
+      latestUserInputIndex = actualStepIndex;
       if (typeof selected === 'string' && selected) {
         selectedModel = selected;
+        awaitingCheckpointModelReanchor = false;
+      } else {
+        // 新回合未携带模型配置：等该回合的首个权威 Checkpoint 到达后再锚定分母。
+        awaitingCheckpointModelReanchor = true;
       }
     }
 
@@ -282,13 +305,17 @@ export function processTrajectorySteps(steps = [], options = {}) {
     if (stepType === StepType.CHECKPOINT && meta) {
       const usage = extractModelUsage(meta);
       if (usage) {
-        checkpointModel = usage.model;
-        if (!selectedModel && usage.model) {
-          selectedModel = usage.model;
+        if (usage.model) {
+          checkpointModel = usage.model;
+          // 仅在该 USER_INPUT 之后的首个 Checkpoint 上重新锚定；子 Agent 步骤不会触发此分支。
+          if (awaitingCheckpointModelReanchor && actualStepIndex > latestUserInputIndex) {
+            selectedModel = usage.model;
+            awaitingCheckpointModelReanchor = false;
+          }
         }
 
         const currentInputTotal = usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
-        updateCompressionState(currentInputTotal, usage.model, idx);
+        updateCompressionState(currentInputTotal, usage.model, actualStepIndex);
 
         lastModelUsage = usage;
         usageSource = 'checkpoint';
@@ -302,13 +329,16 @@ export function processTrajectorySteps(steps = [], options = {}) {
     if (stepType === StepType.PLANNER_RESPONSE && meta) {
       const usage = extractModelUsage(meta);
       if (usage) {
-        checkpointModel = usage.model;
-        if (!selectedModel && usage.model) {
-          selectedModel = usage.model;
+        if (usage.model) {
+          checkpointModel = usage.model;
+          if (awaitingCheckpointModelReanchor && actualStepIndex > latestUserInputIndex) {
+            selectedModel = usage.model;
+            awaitingCheckpointModelReanchor = false;
+          }
         }
 
         const currentInputTotal = usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
-        updateCompressionState(currentInputTotal, usage.model, idx);
+        updateCompressionState(currentInputTotal, usage.model, actualStepIndex);
 
         lastModelUsage = usage;
         usageSource = 'planner';
@@ -326,7 +356,14 @@ export function processTrajectorySteps(steps = [], options = {}) {
   const isUnknownModel = !known && !!effectiveCapacityModel;
 
   const stepCount = steps.length;
-  const lastStepIndex = steps.length - 1;
+  const lastStepIndex = maxStepIndex >= 0 ? maxStepIndex : steps.length - 1;
+  const isWindowed = !!options.isWindowed;
+  const totalSteps = Number.isSafeInteger(options.totalSteps) && options.totalSteps >= 0
+    ? options.totalSteps
+    : stepCount;
+  const windowStartStep = Number.isSafeInteger(options.windowStartStep) && options.windowStartStep >= 0
+    ? options.windowStartStep
+    : 0;
 
   // 优先级 1：有 modelUsage 快照基准
   if (lastModelUsage) {
@@ -362,6 +399,9 @@ export function processTrajectorySteps(steps = [], options = {}) {
       cacheCreationTokens: lastModelUsage.cacheCreationTokens,
       isUnknownModel,
       isTruncated,
+      isWindowed,
+      totalSteps,
+      windowStartStep,
     };
   }
 
@@ -391,5 +431,8 @@ export function processTrajectorySteps(steps = [], options = {}) {
     cacheCreationTokens: 0,
     isUnknownModel,
     isTruncated,
+    isWindowed,
+    totalSteps,
+    windowStartStep,
   };
 }
