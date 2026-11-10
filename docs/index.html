@@ -753,39 +753,39 @@
               <td>90% 前收敛并 Commit 当前重构</td>
             </tr>
             <tr>
-              <td><strong>Gemini 3.8 Flash</strong></td>
+              <td><strong>Gemini 3.8 Flash</strong> (High / Med / Low)</td>
               <td><span class="tag-limit tag-256">256K (262,144)</span></td>
               <td>1,000,000</td>
               <td>后台自动压缩</td>
               <td>长任务及时分叉新会话</td>
             </tr>
             <tr>
-              <td><strong>Claude 5.5</strong> (Opus / Sonnet)</td>
+              <td><strong>Claude Opus 5.5</strong> (High / Med / Low)</td>
               <td><span class="tag-limit tag-256">256K (262,144)</span></td>
               <td>1,000,000</td>
               <td>后台自动压缩</td>
-              <td>适度清理未引用长日志</td>
+              <td>重度推理任务及时分段提交</td>
             </tr>
             <tr>
-              <td><strong>Claude 4.6 / 4.5</strong> (Thinking)</td>
-              <td><span class="tag-limit tag-160">160K (163,840)</span></td>
-              <td>200,000</td>
-              <td>思考链耗尽截断</td>
-              <td>关注深层推理消耗</td>
+              <td><strong>Claude Sonnet 5.5</strong> (High / Med / Low)</td>
+              <td><span class="tag-limit tag-256">256K (262,144)</span></td>
+              <td>1,000,000</td>
+              <td>后台自动压缩</td>
+              <td>日常长代码主力，关注 90% 红环</td>
             </tr>
             <tr>
-              <td><strong>Gemini 3.1 Pro</strong> 系列</td>
-              <td><span class="tag-limit tag-128">128K (131,072)</span></td>
-              <td>2,000,000</td>
-              <td>早期全损截断</td>
-              <td>单问题单会话，勤做任务交接</td>
-            </tr>
-            <tr>
-              <td><strong>GPT-OSS 120B</strong></td>
+              <td><strong>GPT-OSS 120B</strong> (Medium)</td>
               <td><span class="tag-limit tag-80">80K (81,920)</span></td>
               <td>128,000</td>
               <td>硬性截断</td>
               <td>极小窗口，严控单步上下文</td>
+            </tr>
+            <tr>
+              <td><strong>未来新增模型</strong> (Future Released Models)</td>
+              <td><span class="tag-limit tag-256">256K (自适应)</span></td>
+              <td>动态适配</td>
+              <td>默认安全兜底</td>
+              <td>无需升级即刻享受 256K 动态守护</td>
             </tr>
           </tbody>
         </table>

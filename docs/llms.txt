@@ -15,12 +15,12 @@ In Google Antigravity App, developers lack real-time visibility into active cont
 - Resource Footprint: Background Node.js sidecar consumes ~18MB RAM and near-0% CPU, regulated by 250ms debounced event coalescing and an automated host watchdog.
 
 ## Supported Models & Physical Truncation Thresholds
-- Gemini 4 Argon: 256K (262,144 tokens)
-- Gemini 3.8 Flash: 256K (262,144 tokens)
-- Claude 5.5 (Opus / Sonnet): 256K (262,144 tokens)
-- Claude 4.6 / 4.5 (Sonnet / Opus / Thinking): 160K (163,840 tokens)
-- Gemini 3.1 Pro: 128K (131,072 tokens)
-- GPT-OSS 120B: 80K (81,920 tokens)
+- Gemini 4 Argon (High / Medium / Low): 256K (262,144 tokens)
+- Gemini 3.8 Flash (High / Medium / Low): 256K (262,144 tokens)
+- Claude Opus 5.5 (High / Medium / Low): 256K (262,144 tokens)
+- Claude Sonnet 5.5 (High / Medium / Low): 256K (262,144 tokens)
+- GPT-OSS 120B (Medium): 80K (81,920 tokens)
+- Future Released Models: 256K default adaptive baseline
 
 ## Installation & CLI Commands
 Clone repository:
