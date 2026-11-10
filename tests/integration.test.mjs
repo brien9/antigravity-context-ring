@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { resolve, dirname, join } from 'node:path';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -1306,7 +1306,9 @@ test('【阶段三集成测试 17】卸载脚本 manage.mjs 与 uninstall.ps1 �
   // 实机动态运行断言：当目录被占用无法删除时，manage.mjs 必须真实以非 0 状态码退出，绝不输出 [SUCCESS]
   const execFileAsync = promisify(execFile);
   const testLockedDir = resolve(__dirname, '../dist/test_integration_residue_dir');
+  const testDummyConfigFile = resolve(__dirname, '../dist/test_dummy_config.json');
   await mkdir(testLockedDir, { recursive: true });
+  await writeFile(testDummyConfigFile, JSON.stringify({ plugins: { 'antigravity-context-ring': { enabled: true } } }), 'utf8');
 
   // 模拟被宿主占用的目录（锁定 cwd）
   const locker = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { cwd: testLockedDir });
@@ -1316,7 +1318,11 @@ test('【阶段三集成测试 17】卸载脚本 manage.mjs 与 uninstall.ps1 �
     let stderr = '';
     try {
       const res = await execFileAsync(process.execPath, [resolve(__dirname, '../manage.mjs'), 'uninstall'], {
-        env: { ...process.env, AGY_TEST_TARGET_DIR: testLockedDir }
+        env: {
+          ...process.env,
+          AGY_TEST_TARGET_DIR: testLockedDir,
+          AGY_TEST_CONFIG_FILE: testDummyConfigFile
+        }
       });
       stdout = res.stdout;
     } catch (err) {
@@ -1330,5 +1336,6 @@ test('【阶段三集成测试 17】卸载脚本 manage.mjs 与 uninstall.ps1 �
     locker.kill();
     await new Promise(r => setTimeout(r, 400));
     await rm(testLockedDir, { recursive: true, force: true }).catch(() => {});
+    await rm(testDummyConfigFile, { force: true }).catch(() => {});
   }
 });
