@@ -65,9 +65,9 @@ Foundation models natively support ~1M context, but the Antigravity client hard-
 
 ## 🎨 Visual States & Split View Isolation
 
-### 1. Convergent Dual-Track Color Hierarchy
+### 1. State Progression & Color Feedback
 
-The ring progresses smoothly with context usage. Standard conversations follow a four-tier palette (Electric Blue `<60%` ➔ Amber Yellow `60-80%` ➔ Warm Orange `80-90%` ➔ Pure Alert Red `≥90%`). Once context compaction is detected (manual `/compact` or auto-compaction), the safe phase (`<60%`) switches to a luminous **Lavender Violet (`#a78bfa`)** to signify a compacted session, while seamlessly converging into the standard Amber ➔ Orange ➔ Pure Red warning track at `≥60%`.
+The ring progresses smoothly with context usage. Standard conversations follow a four-tier palette (Electric Blue `<60%` ➔ Amber Yellow `60-80%` ➔ Warm Orange `80-90%` ➔ Pure Alert Red `≥90%`). Once context compaction is detected (manual `/compact` or auto-compaction), the safe phase (`<60%`) switches to a clear **Lavender Violet (`#a78bfa`)** to denote an active compacted session, smoothly connecting into the standard Amber ➔ Orange ➔ Pure Red alert stages at `≥60%`.
 
 | 🟢 Healthy / Early Phase (`< 60%`) | 🟡 Transition / Moderate (`60% ~ 80%`) |
 | :---: | :---: |
