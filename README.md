@@ -2,7 +2,7 @@
 
 # Antigravity Context Ring
 
-**专为 Google Antigravity 桌面客户端 (Antigravity App) 打造的原生级行内上下文水位指示器**  
+**专为 Google Antigravity 桌面客户端 (Antigravity App) 打造的原生级行内上下文长度指示器**  
 *Native inline context telemetry for Google Antigravity Desktop App. Zero-invasion, RPC ground-truth, 0ms instant switch.*
 
 [![Release](https://img.shields.io/badge/Release-v1.1.0-10b981?style=flat-square&logo=github)](https://github.com/brien9/antigravity-context-ring/releases)
@@ -67,7 +67,7 @@ Context Ring 把这根真实的截断线做成一颗 19px 的行内圆环：
 
 ### 1. 多阶状态演进与色彩反馈 (State Progression & Color Feedback)
 
-圆环伴随上下文水位平滑演进。常规未压缩会话遵循四阶标准色标（科技蓝 `<60%` ➔ 琥珀黄 `60-80%` ➔ 暖橙 `80-90%` ➔ 纯正红 `≥90%`）；一旦检测到历史上下文发生过压缩（无论手动 `/compact` 还是自动压缩），在 `<60%` 安全期切换为清透的**薰衣草亮紫 (`#a78bfa`)** 标识“已压缩状态”，并在 `≥60%` 时自然衔接黄/橙/正红告警阶梯，直观清晰、不增加认知负担。
+圆环伴随上下文长度平滑演进。常规未压缩会话遵循四阶标准色标（科技蓝 `<60%` ➔ 琥珀黄 `60-80%` ➔ 暖橙 `80-90%` ➔ 纯正红 `≥90%`）；一旦检测到历史上下文发生过压缩（无论手动 `/compact` 还是自动压缩），在 `<60%` 安全期切换为清透的**薰衣草亮紫 (`#a78bfa`)** 标识“已压缩状态”，并在 `≥60%` 时自然衔接黄/橙/正红告警阶梯，直观清晰、不增加认知负担。
 
 | 🟢 健康初期 (`< 60%`) | 🟡 注意过渡 (`60% ~ 80%`) |
 | :---: | :---: |
