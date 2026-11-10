@@ -155,25 +155,8 @@ var __agRingCacheModule = (function() {
     return { accept: true, revision: revision };
   }
 
-  // 前端轻量模型截断阈值推导（用于新建草稿会话与冷会话首屏估算动态适配分母）
+  // 前端轻量模型截断阈值推导（客户端当前在役模型全线统一为 256K 基准）
   function inferClientModelLimit(modelHint = '') {
-    if (!modelHint || typeof modelHint !== 'string') return 256000;
-    const idLower = modelHint.trim().toLowerCase();
-    if (!idLower) return 256000;
-    if (idLower.includes('gpt-oss') || idLower.includes('120b')) return 80000;
-    if (idLower.includes('claude') || idLower.includes('opus') || idLower.includes('sonnet') || /(?:^|[^a-z0-9])model_placeholder_m(?:26|35)(?:$|[^0-9])/i.test(idLower)) {
-      if (/(?:^|[-_\s])5[._-]5(?:$|[-_\s(])/.test(idLower) || idLower.includes('m40')) return 256000;
-      return 160000;
-    }
-    if (idLower.includes('pro') || /^model_placeholder_m(?:16|18|36|37|47)$/i.test(idLower)) return 128000;
-    if (idLower.includes('flash') || idLower.includes('lite') || idLower.includes('argon')) {
-      const versionMatch = idLower.match(/(\d+\.\d+)/) || idLower.match(/_(\d+)_(\d+)_/);
-      const version = versionMatch
-        ? parseFloat(versionMatch.length > 2 ? `${versionMatch[1]}.${versionMatch[2]}` : versionMatch[1])
-        : NaN;
-      if (!Number.isNaN(version) && version < 3.5) return 128000;
-      return 256000;
-    }
     return 256000;
   }
 

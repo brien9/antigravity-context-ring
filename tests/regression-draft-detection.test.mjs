@@ -324,7 +324,7 @@ test('【最终封板 8】context-calculator: PLANNER_RESPONSE 携带 modelUsage
     }
   ];
 
-  const result = processTrajectorySteps(steps);
+  const result = processTrajectorySteps(steps, { customLimits: { 'gemini-2.5-pro': 128_000 } });
   assert.equal(result.selectedModel, 'gemini-2.5-pro', 'PLANNER_RESPONSE 携带的 model 必须重锚定 selectedModel');
   assert.equal(result.contextLimit, 128_000, '容量限制必须重锚定为 gemini-2.5-pro 的 128K (Pro系列真实截断阈值)');
 });
@@ -386,17 +386,17 @@ test('【最终封板 11】extractPaneModelHint: textContent 与 aria-label 中�
     hA.cleanup();
   }
 
-  // 场景 B: textContent 带有前缀 "选择模型: Claude 3.5 Sonnet"
+  // 场景 B: textContent 带有前缀 "选择模型: Claude Sonnet 5.5"
   const hB = createHarness({
     parentHierarchy: 'welcome-text',
-    initialModelText: '选择模型: Claude 3.5 Sonnet',
+    initialModelText: '选择模型: Claude Sonnet 5.5',
     initialAriaLabel: ''
   });
   try {
     installAgContextRingWidget();
     await new Promise((r) => setTimeout(r, 40));
     const tipB = hB.getShadowText('tooltip-text');
-    assert.match(tipB, /0\.0K \/ 160\.0K/, '应成功提取 Claude 3.5 Sonnet 并应用 160K 分母');
+    assert.match(tipB, /0\.0K \/ 256\.0K/, '应成功提取 Claude Sonnet 5.5 并应用 256K 分母');
   } finally {
     hB.cleanup();
   }

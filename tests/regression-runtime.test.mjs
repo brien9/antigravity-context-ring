@@ -204,10 +204,10 @@ test('【深度审计 Bug 2】AGY_TEST_TARGET_DIR 双向测试沙箱隔离：严
   assert.equal(isContextRingProcess(sandboxCmd, 1002, 9999, sandboxDir), true, '测试沙箱模式下精准匹配沙箱内的 Sidecar 进程');
 });
 
-test('【深度审计 Bug 3 & Bug 4 & Bug 5】setCachedSnapshot 回退读取 L2 LocalStorage、历史模型切换不强制穿透与 Claude 4.6 占位符分母推导', async () => {
-  // Bug 5：Claude 4.6 MODEL_PLACEHOLDER_M26 / M35 推导为 160000
-  assert.equal(inferClientModelLimit('MODEL_PLACEHOLDER_M26'), 160_000, 'MODEL_PLACEHOLDER_M26 (Claude 4.6) 必须推导为 160K');
-  assert.equal(inferClientModelLimit('MODEL_PLACEHOLDER_M35'), 160_000, 'MODEL_PLACEHOLDER_M35 (Claude 4.6) 必须推导为 160K');
+test('【深度审计 Bug 3 & Bug 4 & Bug 5】setCachedSnapshot 回退读取 L2 LocalStorage、历史模型切换不强制穿透与在役主力模型分母推导', async () => {
+  // Bug 5：在役主力模型 MODEL_PLACEHOLDER_M402 (Claude Opus 5.5) / M405 (Claude Sonnet 5.5) 推导为 256000
+  assert.equal(inferClientModelLimit('MODEL_PLACEHOLDER_M402'), 256_000, 'MODEL_PLACEHOLDER_M402 (Claude Opus 5.5) 必须推导为 256K');
+  assert.equal(inferClientModelLimit('MODEL_PLACEHOLDER_M405'), 256_000, 'MODEL_PLACEHOLDER_M405 (Claude Sonnet 5.5) 必须推导为 256K');
 
   // Bug 4 后端部分：8s 内存缓存包含模型提示签名，切换模型立即穿透旧分母缓存
   const cidBackend = 'cid-model-switch-backend';

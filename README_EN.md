@@ -49,13 +49,13 @@ sh ./install.sh            # macOS / Linux
 
 ## 💡 Why Context Ring?
 
-Foundation models natively support ~1M context, but the Antigravity client hard-caps truncation at **256K** (128K for some Pro models) and forces lossy compaction at that point. The native UI never shows remaining context and never warns before it happens.
+Foundation models natively support ~1M context, but the Antigravity client hard-caps truncation at **256K** and forces lossy compaction at that point. The native UI never shows remaining context and never warns before it happens.
 
 **Context Ring** turns that real cutoff into a 19px inline ring:
 
 | Dimension | Antigravity Context Ring |
 | :--- | :--- |
-| **Denominator Baseline** | Mirrors the client's actual truncation limits (256K / 128K / 160K / 80K); warns before lossy compaction |
+| **Denominator Baseline** | **Aligned to 256K ground-truth truncation limit**; warns before lossy compaction |
 | **Token Measurement** | **Connect-RPC snapshots** read `modelUsage` directly (incl. cache read/write tokens); no character estimation |
 | **Subagent Concurrency** | **Three-tier model decoupling**; capacity is locked solely by the UI-selected model (`selectedModel`) |
 | **UI Ergonomics** | **19px inline alignment + Shadow DOM isolation**; follows dark/light theme, reveals HUD on hover |
@@ -74,7 +74,7 @@ The ring progresses smoothly with context usage. Standard conversations follow a
 | :---: | :---: |
 | <img src="assets/state-low.jpg" alt="Google Antigravity context usage low state (<60%) - native blue inline SVG ring" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"> | <img src="assets/state-medium.jpg" alt="Google Antigravity context usage medium state (60-80%) - amber warning ring" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"> |
 | 🔴 Critical Threshold (`≥ 90%`) | 🟣 Compaction Triggered (`Compacted < 60%`) |
-| <img src="assets/state-critical.jpg" alt="Google Antigravity context limit critical state (>=90%) - approaching 128K/256K auto-compaction truncation threshold" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"> | <img src="assets/state-compacted.jpg" alt="Google Antigravity auto-compaction triggered state - dual-track purple ring showing released context tokens" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"> |
+| <img src="assets/state-critical.jpg" alt="Google Antigravity context limit critical state (>=90%) - approaching 256K auto-compaction truncation threshold" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"> | <img src="assets/state-compacted.jpg" alt="Google Antigravity auto-compaction triggered state - dual-track purple ring showing released context tokens" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"> |
 
 ### 2. Split View Multi-Pane Isolation
 

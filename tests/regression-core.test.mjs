@@ -518,8 +518,6 @@ test('【回归 8】model-limits: 全量覆盖 GetUserStatus 实机模型枚举�
     { enumId: 'MODEL_PLACEHOLDER_M403', modelId: 'claude-sonnet-5-5-low', limit: 256_000 },
     { enumId: 'MODEL_PLACEHOLDER_M404', modelId: 'claude-sonnet-5-5-medium', limit: 256_000 },
     { enumId: 'MODEL_PLACEHOLDER_M405', modelId: 'claude-sonnet-5-5-high', limit: 256_000 },
-    // GPT-OSS 120B (Medium)
-    { enumId: 'MODEL_OPENAI_GPT_OSS_120B_MEDIUM', modelId: 'gpt-oss-120b-medium', limit: 80_000 },
   ];
 
   for (const item of clientModels) {
@@ -888,19 +886,18 @@ test('【回归 10】边界细节四合一验证：常规会话与持久压缩�
   assert.equal(compressedRewindCheck.isRewind, true);
   assert.equal(compressedRewindCheck.nextEpoch, 2, '已处于压缩态的会话在用户回退历史消息时必须正常递增世代');
 
-  // 2. 草稿分母推导与 fallbackModel 优先级（不覆盖历史轨迹自身的 CHECKPOINT 模型）
+  // 2. 草稿分母推导与 fallbackModel 优先级（在役模型统一 256K 基准，且不覆盖历史轨迹自身的 CHECKPOINT 模型）
   assert.equal(inferClientModelLimit('Gemini 4 Argon 中'), 256_000);
-  assert.equal(inferClientModelLimit('Gemini 3.1 Pro'), 128_000);
-  assert.equal(inferClientModelLimit('Claude Sonnet 4.6'), 160_000);
+  assert.equal(inferClientModelLimit('Gemini 3.8 Flash 高'), 256_000);
+  assert.equal(inferClientModelLimit('Claude Sonnet 5.5'), 256_000);
   assert.equal(inferClientModelLimit('Claude Opus 5.5'), 256_000);
-  assert.equal(inferClientModelLimit('GPT-OSS 120B'), 80_000);
 
-  const claude46HistorySteps = [
+  const customHistorySteps = [
     {
       type: StepType.CHECKPOINT,
       metadata: {
         modelUsage: {
-          model: 'MODEL_PLACEHOLDER_M35', // Claude 4.6 (160K)
+          model: 'CUSTOM_MODEL_160K',
           inputTokens: 60_000,
           outputTokens: 1_200,
           cacheReadTokens: 0,
@@ -909,7 +906,7 @@ test('【回归 10】边界细节四合一验证：常规会话与持久压缩�
       }
     }
   ];
-  const calcWithFallback = processTrajectorySteps(claude46HistorySteps, { fallbackModel: 'Gemini 4 Argon 中' });
+  const calcWithFallback = processTrajectorySteps(customHistorySteps, { fallbackModel: 'Gemini 4 Argon 中', customLimits: { 'CUSTOM_MODEL_160K': 160_000 } });
   assert.equal(calcWithFallback.contextLimit, 160_000, 'fallbackModel 绝不能篡改历史会话已有的真实 Checkpoint 模型分母');
 
   // 3. 方案 L1（会话级持久烙印）：当后续对话重新涨过压缩前水位时，仍保留压缩标记以支持高水位紫红二次超限阶梯
@@ -1079,7 +1076,14 @@ test('【回归 13】无显式 USER_INPUT planModel 时跨模型切换：分母�
     }
   ];
 
-  const calcSwitched = processTrajectorySteps(switchedSteps);
+  const customTestLimits = {
+    'Claude-3.7-Sonnet': 160_000,
+    'GPT-OSS-120B': 80_000,
+    'MODEL_PLACEHOLDER_M16': 128_000,
+    'MODEL_OPENAI_GPT_OSS_120B_MEDIUM': 80_000
+  };
+
+  const calcSwitched = processTrajectorySteps(switchedSteps, { customLimits: customTestLimits });
   assert.equal(calcSwitched.checkpointModel, 'GPT-OSS-120B', '最新快照模型必须更新为 GPT-OSS-120B');
   assert.equal(calcSwitched.contextLimit, 80_000, '无显式 USER_INPUT 锁定时，分母必须跟随最新 checkpointModel 切换为 80K，不得被首轮 160K 锁死');
 
@@ -1098,7 +1102,7 @@ test('【回归 13】无显式 USER_INPUT planModel 时跨模型切换：分母�
     }
   ];
 
-  const calcEmptyFollowUp = processTrajectorySteps(emptyModelFollowUpSteps);
+  const calcEmptyFollowUp = processTrajectorySteps(emptyModelFollowUpSteps, { customLimits: customTestLimits });
   assert.equal(calcEmptyFollowUp.checkpointModel, 'GPT-OSS-120B', '中间步骤空 model 字段不得清空已记录的 checkpointModel');
   assert.equal(calcEmptyFollowUp.contextLimit, 80_000, '分母必须继续保持 80K 而不是回退到默认 256K');
 });
@@ -1147,7 +1151,12 @@ test('【回归 14】首轮显式 planModel 后切换模型但新 USER_INPUT 无
     }
   ];
 
-  const result = processTrajectorySteps(steps);
+  const result = processTrajectorySteps(steps, {
+    customLimits: {
+      'MODEL_PLACEHOLDER_M16': 128_000,
+      'MODEL_OPENAI_GPT_OSS_120B_MEDIUM': 80_000
+    }
+  });
   assert.equal(result.selectedModel, 'MODEL_OPENAI_GPT_OSS_120B_MEDIUM', '新回合无显式配置时，分母必须由该回合 Checkpoint 重新锚定');
   assert.equal(result.checkpointModel, 'MODEL_OPENAI_GPT_OSS_120B_MEDIUM');
   assert.equal(result.contextLimit, 80_000, '切到 GPT-OSS 后必须使用 80K，而不是继续锁死旧的 Pro 128K');

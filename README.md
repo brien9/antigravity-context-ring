@@ -49,13 +49,13 @@ sh ./install.sh            # macOS / Linux
 
 ## 💡 为什么需要它？ · Why Context Ring?
 
-底层模型原生的上下文是 1M 级别，但 Antigravity 客户端把截断阈值写死在 **256K**（部分 Pro 模型 128K），到点强制触发有损压缩，而官方 UI 全程不显示余量、压缩前也不预警。
+底层模型原生的上下文是 1M 级别，但 Antigravity 客户端把截断阈值写死在 **256K**，到点强制触发有损压缩，而官方 UI 全程不显示余量、压缩前也不预警。
 
 Context Ring 把这根真实的截断线做成一颗 19px 的行内圆环：
 
 | 核心维度 | Antigravity Context Ring |
 | :--- | :--- |
-| **截断分母基准** | 对齐客户端实际截断阈值（256K / 128K / 160K / 80K），在有损压缩发生前精准预警 |
+| **截断分母基准** | **统一对齐 256K 物理截断基准**，在有损压缩发生前精准预警 |
 | **Token 计量源** | **Connect-RPC 快照**，直读底层 `modelUsage`（含 Cache 读写 Token），不做字符估算 |
 | **Subagent 并发** | **模型三层解耦**，仅由 UI 主选模型（`selectedModel`）唯一锁定分母容量 |
 | **UI 交互形态** | **19px 几何对齐 + Shadow DOM 隔离**，自动同步深浅主题，悬停即看、移开即隐 |
@@ -74,7 +74,7 @@ Context Ring 把这根真实的截断线做成一颗 19px 的行内圆环：
 | :---: | :---: |
 | <img src="assets/state-low.jpg" alt="Google Antigravity context usage low state (<60%) - native blue inline SVG ring" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"> | <img src="assets/state-medium.jpg" alt="Google Antigravity context usage medium state (60-80%) - amber warning ring" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"> |
 | 🔴 临限极危 (`≥ 90%`) | 🟣 历史已压缩 (`Compacted < 60%`) |
-| <img src="assets/state-critical.jpg" alt="Google Antigravity context limit critical state (>=90%) - approaching 128K/256K auto-compaction truncation threshold" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"> | <img src="assets/state-compacted.jpg" alt="Google Antigravity auto-compaction triggered state - dual-track purple ring showing released context tokens" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"> |
+| <img src="assets/state-critical.jpg" alt="Google Antigravity context limit critical state (>=90%) - approaching 256K auto-compaction truncation threshold" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"> | <img src="assets/state-compacted.jpg" alt="Google Antigravity auto-compaction triggered state - dual-track purple ring showing released context tokens" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"> |
 
 ### 2. 多分屏独立隔离与实时联动 (Split View Isolation)
 

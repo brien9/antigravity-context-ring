@@ -391,7 +391,7 @@ test('【行为级 6】isDraftView 三态区分: 识别失败不伪装 0%，确�
   // 场景 A：Fiber 已挂载但既非「0 步 0 回合」的确认草稿，也找不到 conversation-view。
   // 旧实现会把这种情况反推为草稿并渲染「新会话 0%」，属于数据可信度缺陷。
   const hA = buildWidgetDomHarness({
-    initialModelText: 'GPT-OSS 120B',
+    initialModelText: 'Gemini 4 Argon',
     providerState: {},
     getSnapshot: () => OK_SNAPSHOT
   });
@@ -410,7 +410,7 @@ test('【行为级 6】isDraftView 三态区分: 识别失败不伪装 0%，确�
 
   // 场景 B：Fiber 明确报告 0 步、0 回合且无 CID —— 这是可确认的真草稿，仍应保留 0% 基准。
   const hB = buildWidgetDomHarness({
-    initialModelText: 'GPT-OSS 120B',
+    initialModelText: 'Gemini 4 Argon',
     providerState: { conversationId: null, trajectorySlice: { totalStepsLength: 0 }, turns: [] },
     getSnapshot: () => OK_SNAPSHOT
   });
@@ -419,7 +419,7 @@ test('【行为级 6】isDraftView 三态区分: 识别失败不伪装 0%，确�
     await new Promise((r) => setTimeout(r, 30));
 
     const tipB = hB.getShadowText('tooltip-text');
-    assert.equal(tipB, '新会话 · 0.0K / 80.0K 上下文未占用', '确认无疑的草稿态必须保留 0% 基准并跟随模型分母');
+    assert.equal(tipB, '新会话 · 0.0K / 256.0K 上下文未占用', '确认无疑的草稿态必须保留 0% 基准并跟随模型分母');
     assert.equal(hB.rpcRequests.length, 0, '草稿态不得发起任何会话请求');
   } finally {
     hB.cleanup();

@@ -20,16 +20,18 @@ test('estimateTokensFromText: 中英文字符权重准确计算', () => {
 });
 
 test('getPlatformTruncationLimit: 严格映射平台真实截断阈值', () => {
+  // Gemini 4 Argon -> 256,000 (256k)
+  assert.equal(getPlatformTruncationLimit('MODEL_PLACEHOLDER_M417'), 256_000);
   // Gemini 3.8 Flash High -> 256,000 (256k)
   assert.equal(getPlatformTruncationLimit('MODEL_PLACEHOLDER_M318'), 256_000);
-  // Gemini 3.1 Pro -> 128,000 (128k)
-  assert.equal(getPlatformTruncationLimit('MODEL_PLACEHOLDER_M16'), 128_000);
-  // Claude 4.6 Thinking -> 160,000 (160k)
-  assert.equal(getPlatformTruncationLimit('MODEL_PLACEHOLDER_M35'), 160_000);
-  // Claude 5.5 -> 256,000 (256k)
+  // Claude Opus 5.5 -> 256,000 (256k)
   assert.equal(getPlatformTruncationLimit('MODEL_PLACEHOLDER_M402'), 256_000);
-  // GPT-OSS 120B -> 80,000 (80k)
-  assert.equal(getPlatformTruncationLimit('MODEL_OPENAI_GPT_OSS_120B_MEDIUM'), 80_000);
+  // Claude Sonnet 5.5 -> 256,000 (256k)
+  assert.equal(getPlatformTruncationLimit('MODEL_PLACEHOLDER_M405'), 256_000);
+  // 未知或未来新增模型自适应兜底 -> 256,000
+  assert.equal(getPlatformTruncationLimit('MODEL_FUTURE_UNKNOWN'), 256_000);
+  // 支持自定义覆盖 (customOverrides)
+  assert.equal(getPlatformTruncationLimit('CUSTOM_MODEL', { 'CUSTOM_MODEL': 128_000 }), 128_000);
 });
 
 test('processTrajectorySteps: 空步骤或未初始化会话返回中性状态', () => {
@@ -167,19 +169,19 @@ test('processTrajectorySteps: 模型切换动态适配阈值', () => {
     {
       type: StepType.USER_INPUT,
       userInput: {
-        userResponse: '切换到 Pro 模型',
+        userResponse: '切换到自定义阈值模型',
         userConfig: {
           plannerConfig: {
-            planModel: 'MODEL_PLACEHOLDER_M16' // 切换为 128K
+            planModel: 'CUSTOM_TEST_MODEL' // 动态适配为 128K
           }
         }
       }
     }
   ];
 
-  const result = processTrajectorySteps(steps);
+  const result = processTrajectorySteps(steps, { customLimits: { 'CUSTOM_TEST_MODEL': 128_000 } });
   assert.equal(result.ready, true);
-  assert.equal(result.model, 'MODEL_PLACEHOLDER_M16');
+  assert.equal(result.model, 'CUSTOM_TEST_MODEL');
   assert.equal(result.contextLimit, 128_000);
   // 64000 / 128000 = 50%
   assert.ok(result.usageRatio >= 0.5);
@@ -271,14 +273,14 @@ test('processTrajectorySteps: Planner 响应携带 modelUsage 时的压缩捕获
 
 test('processTrajectorySteps [阶段三]: 模型三层解耦，子 Agent 轻量模型严禁篡改主圆环分母', () => {
   const steps = [
-    // 1. 用户在输入框中明确选择 Pro 模型 (128K)
+    // 1. 用户在输入框中明确选择主模型 (自定义 128K 阈值)
     {
       type: StepType.USER_INPUT,
       userInput: {
         userResponse: '请帮我调研代码库并启动子 Agent',
         userConfig: {
           plannerConfig: {
-            planModel: 'MODEL_PLACEHOLDER_M16' // Pro 128K
+            planModel: 'CUSTOM_MAIN_128K' // 主模型分母 128K
           }
         }
       }
@@ -288,7 +290,7 @@ test('processTrajectorySteps [阶段三]: 模型三层解耦，子 Agent 轻量�
       type: StepType.CHECKPOINT,
       metadata: {
         modelUsage: {
-          model: 'MODEL_PLACEHOLDER_M16',
+          model: 'CUSTOM_MAIN_128K',
           inputTokens: 60_000,
           outputTokens: 1_000,
           cacheReadTokens: 10_000,
@@ -318,14 +320,14 @@ test('processTrajectorySteps [阶段三]: 模型三层解耦，子 Agent 轻量�
     }
   ];
 
-  const result = processTrajectorySteps(steps);
+  const result = processTrajectorySteps(steps, { customLimits: { 'CUSTOM_MAIN_128K': 128_000 } });
   assert.equal(result.ready, true);
-  // 核心校验：分母必须牢牢锁定在用户主选的 Pro 128K，绝不能被子 Agent 的 256K 冲垮！
-  assert.equal(result.selectedModel, 'MODEL_PLACEHOLDER_M16');
+  // 核心校验：分母必须牢牢锁定在用户主选的主模型 128K，绝不能被子 Agent 的 256K 冲垮！
+  assert.equal(result.selectedModel, 'CUSTOM_MAIN_128K');
   assert.equal(result.contextLimit, 128_000);
   // 执行模型正确记录为子 Agent 的模型
   assert.equal(result.executionModel, 'MODEL_PLACEHOLDER_M318');
-  assert.equal(result.checkpointModel, 'MODEL_PLACEHOLDER_M16');
+  assert.equal(result.checkpointModel, 'CUSTOM_MAIN_128K');
   // 权威用量: 60000 input + 10000 cacheRead + 1000 output + 2000 tool + 估算(11 汉字 -> 8 tokens) = 73008
   assert.ok(result.contextUsed > 72_000 && result.contextUsed < 75_000);
   // 占比应该基于 128K 分母: ~73008 / 128000 ≈ 57.0%

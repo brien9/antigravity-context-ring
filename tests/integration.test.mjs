@@ -157,18 +157,18 @@ test('场景 6: 模型切换及平台压缩阈值联动', () => {
   assert.equal(flashView.limit, 256_000);
   assert.equal(flashView.percent, '25.0%');
 
-  // 用户在对话中切换为 Gemini 3.1 Pro -> 128K 阈值
+  // 用户在对话中切换为自定义限额模型 -> 128K 阈值
   const proSteps = [
     ...flashSteps,
     {
       type: StepType.USER_INPUT,
       userInput: {
-        userResponse: '换用 Pro 深度思考',
-        userConfig: { plannerConfig: { planModel: 'MODEL_PLACEHOLDER_M16' } }
+        userResponse: '换用深度思考模型',
+        userConfig: { plannerConfig: { planModel: 'CUSTOM_THINKING_MODEL' } }
       }
     }
   ];
-  const proView = formatContextResult(processTrajectorySteps(proSteps));
+  const proView = formatContextResult(processTrajectorySteps(proSteps, { customLimits: { 'CUSTOM_THINKING_MODEL': 128_000 } }));
   assert.equal(proView.limit, 128_000);
   // 64000 左右在 128K 中占比约 50%
   assert.ok(proView.ratio >= 0.5);
@@ -589,7 +589,7 @@ test('【阶段三集成测试 3】全链路三层模型解耦与视图呈现：
       userInput: {
         userResponse: '写一个微服务架构方案',
         userConfig: {
-          plannerConfig: { planModel: 'MODEL_PLACEHOLDER_M16' } // Pro 128K
+          plannerConfig: { planModel: 'CUSTOM_MAIN_128K' } // 主模型 128K
         }
       }
     },
@@ -597,7 +597,7 @@ test('【阶段三集成测试 3】全链路三层模型解耦与视图呈现：
       type: StepType.CHECKPOINT,
       metadata: {
         modelUsage: {
-          model: 'MODEL_PLACEHOLDER_M16',
+          model: 'CUSTOM_MAIN_128K',
           inputTokens: 90_000,
           outputTokens: 2_000,
           cacheReadTokens: 10_000,
@@ -615,11 +615,11 @@ test('【阶段三集成测试 3】全链路三层模型解耦与视图呈现：
     }
   ];
 
-  const calc = processTrajectorySteps(steps);
+  const calc = processTrajectorySteps(steps, { customLimits: { 'CUSTOM_MAIN_128K': 128_000 } });
   const view = formatContextResult(calc);
 
   assert.equal(view.ready, true);
-  assert.equal(view.selectedModel, 'MODEL_PLACEHOLDER_M16');
+  assert.equal(view.selectedModel, 'CUSTOM_MAIN_128K');
   assert.equal(view.executionModel, 'MODEL_PLACEHOLDER_M318');
   assert.equal(view.limit, 128_000);
   assert.equal(view.limitK, '128.0K');
