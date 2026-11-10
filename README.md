@@ -2,7 +2,7 @@
 
 # Antigravity Context Ring
 
-**专为 Google Antigravity 桌面客户端 (Antigravity App) 打造的原生级行内上下文长度指示器**  
+**专为 Google Antigravity 桌面客户端 (Antigravity App) 打造的原生级行内上下文长度监控圆环**  
 *Native inline context telemetry for Google Antigravity Desktop App. Zero-invasion, RPC ground-truth, 0ms instant switch.*
 
 [![Release](https://img.shields.io/badge/Release-v1.1.0-10b981?style=flat-square&logo=github)](https://github.com/brien9/antigravity-context-ring/releases)
