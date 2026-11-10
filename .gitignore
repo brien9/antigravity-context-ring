@@ -11,9 +11,11 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Local workspace
+# Local workspace & Review Bundle
 .workbuddy/
 .handoff/
+REVIEW_BUNDLE*.md
+scripts/
 
 # 站点 GEO/SEO 文件（本地保留，不入库；启用 Pages 前需 git add -f 补回）
 docs/robots.txt
