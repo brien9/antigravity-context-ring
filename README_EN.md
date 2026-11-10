@@ -6,20 +6,15 @@
 *Zero-invasion, Connect-RPC ground-truth, 0ms instant switch, ~18MB footprint.*
 
 [![Release](https://img.shields.io/badge/Release-v1.1.0-10b981?style=flat-square&logo=github)](https://github.com/brien9/antigravity-context-ring/releases)
-[![Tests](https://img.shields.io/badge/Tests-125%20passed-22c55e?style=flat-square&logo=github-actions&logoColor=white)](#)
 [![Host](https://img.shields.io/badge/Host-Google%20Antigravity-4285f4?style=flat-square&logo=google&logoColor=white)](#)
 [![Platforms](https://img.shields.io/badge/Platforms-Win%20%7C%20macOS%20%7C%20Linux-334155?style=flat-square)](#)
-[![License](https://img.shields.io/badge/License-MIT-64748b?style=flat-square)](LICENSE)
 
 [![Telemetry](https://img.shields.io/badge/Telemetry-Connect--RPC%20Ground--Truth-06b6d4?style=flat-square)](#)
 [![Non-Invasive](https://img.shields.io/badge/app.asar-100%25%20Untouched-3b82f6?style=flat-square)](#)
 [![Latency](https://img.shields.io/badge/Session%20Switch-0ms%20SWR-6366f1?style=flat-square)](#)
 [![Memory](https://img.shields.io/badge/Memory-~18MB%20Footprint-8b5cf6?style=flat-square)](#)
 
-<br>
-
-[![简体中文](https://img.shields.io/badge/%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-Switch-1e293b?style=flat-square)](README.md)
-[![English](https://img.shields.io/badge/English-Active-3b82f6?style=flat-square)](README_EN.md)
+<a href="README.md">简体中文</a> | <a href="README_EN.md">English</a>
 
 <br><br>
 
