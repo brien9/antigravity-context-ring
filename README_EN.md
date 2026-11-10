@@ -18,7 +18,7 @@
 
 <br><br>
 
-<img src="assets/hero-showcase.jpg" alt="Antigravity Context Ring - 19px native inline context window and token usage indicator for Google Antigravity App with frosted-glass HUD tooltip" width="100%" style="border-radius: 8px; box-shadow: 0 4px 24px rgba(0,0,0,0.15);">
+<img src="assets/hero-showcase.jpg" alt="Antigravity Context Ring - 19px native inline context window and token usage indicator for Google Antigravity App with frosted-glass HUD tooltip" width="580" style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
 
 <sub>19×19px native micro-ring mounted directly beside the model selector · Silent ambient companion, sub-millisecond frosted-glass telemetry HUD on hover</sub>
 
