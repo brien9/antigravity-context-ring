@@ -1,6 +1,6 @@
 # Antigravity Context Ring
 
-> Native inline context window monitor and real-time Connect-RPC token telemetry for Google Antigravity App.
+> Native inline context window monitor and real-time Connect-RPC token telemetry for Google Antigravity Desktop App (Antigravity App / Antigravity IDE).
 
 ## Problem Statement
 In Google Antigravity App, developers lack real-time visibility into active context window usage. Although underlying foundation models natively support 1M to 2M tokens via official APIs, Antigravity's client environment enforces an automated server-side context compaction (Auto-Compaction) and physical truncation limit at 128K tokens (Pro series) or 256K tokens (Flash & Claude series) to throttle subscription quota consumption and manage GPU memory. Reaching this 256K ceiling triggers silent, lossy summarization—the true root cause behind Gemini's sudden mid-task amnesia and hallucination—resulting in irreversible loss of earlier architectural context without prior warning.

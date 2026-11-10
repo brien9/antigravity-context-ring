@@ -2,7 +2,7 @@
 
 # Antigravity Context Ring
 
-**Native inline context window monitor & token usage telemetry for Google Antigravity App**  
+**Native inline context window monitor & token usage telemetry for Google Antigravity Desktop App (Antigravity App)**  
 *Zero-invasion, Connect-RPC ground-truth, 0ms instant switch, ~18MB footprint.*
 
 [![Release](https://img.shields.io/badge/Release-v1.1.0-10b981?style=flat-square)](https://github.com/brien9/antigravity-context-ring/releases)

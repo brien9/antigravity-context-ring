@@ -2,8 +2,8 @@
 
 # Antigravity Context Ring
 
-**专为 Google Antigravity 打造的原生级行内上下文水位指示器**  
-*Native inline context telemetry for Google Antigravity. Zero-invasion, RPC ground-truth, 0ms instant switch.*
+**专为 Google Antigravity 桌面客户端 (Antigravity App) 打造的原生级行内上下文水位指示器**  
+*Native inline context telemetry for Google Antigravity Desktop App. Zero-invasion, RPC ground-truth, 0ms instant switch.*
 
 [![Release](https://img.shields.io/badge/Release-v1.1.0-10b981?style=flat-square)](https://github.com/brien9/antigravity-context-ring/releases)
 [![Memory](https://img.shields.io/badge/Memory-~18MB-6366f1?style=flat-square)](#)
