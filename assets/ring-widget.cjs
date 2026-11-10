@@ -463,22 +463,8 @@ function installAgContextRingWidget() {
     return aria.replace(/^(?:选择模型|select model)\s*[:：-]?\s*/i, '').trim();
   }
 
-  function getDraftSnapshot(targetBox, modelEl) {
-    const hint = extractPaneModelHint(targetBox, modelEl);
-    const limit = inferClientModelLimit(hint);
-    if (limit === 256000) return DRAFT_SNAPSHOT;
-    const limitK = (limit / 1000).toFixed(1) + 'K';
-    return {
-      ready: true,
-      ratio: 0,
-      percent: '0.0%',
-      used: 0,
-      usedK: '0.0K',
-      limit,
-      limitK,
-      tooltip: `0.0% · 0.0K / ${limitK} 上下文已使用`,
-      isDraft: true,
-    };
+  function getDraftSnapshot() {
+    return DRAFT_SNAPSHOT;
   }
 
   function getUnresolvedSnapshot() {

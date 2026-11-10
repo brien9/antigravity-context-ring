@@ -500,7 +500,7 @@ test('【回归 7】Cortex 真实协议 Prefix Cache 命中：严禁漏算 cache
   assert.equal(view.tooltip, '36.5% · 93.5K / 256.0K 上下文已使用');
 });
 
-test('【回归 8】model-limits: 全量覆盖 GetUserStatus 实机模型枚举与 modelId（Gemini 4 Argon / Claude 5.5 / GPT-OSS 120B）及大小写统一查表', () => {
+test('【回归 8】model-limits: 全量覆盖 GetUserStatus 实机模型枚举与 modelId（Gemini 4 Argon / Gemini 3.8 Flash / Claude 5.5）及大小写统一查表', () => {
   const clientModels = [
     // Gemini 4 Argon (High / Medium / Low)
     { enumId: 'MODEL_PLACEHOLDER_M417', modelId: 'gemini-4-argon-high', limit: 256_000 },
@@ -988,15 +988,15 @@ test('【回归 12】三道防线体系 (Three-Tier Defense)：跨模型载荷�
   const r2 = processTrajectorySteps(nextTurnSteps);
   assert.equal(r2.compressionDetected, false, '切模型次轮基准已重锚定，同模型正常增长绝不能触发延迟误报');
 
-  // 3. 测试用例 3（跨模型 Thinking 块剥离等大跌验证）：Claude 100K ➔ GPT 65K（跨模型跌 35K 载荷剥离），验证不被误判为压缩
+  // 3. 测试用例 3（跨模型 Thinking 块剥离等大跌验证）：Claude 5.5 100K ➔ Gemini 4 Argon 65K（跨模型跌 35K 载荷剥离），验证不被误判为压缩
   const crossModelBigDropSteps = [
     {
       type: StepType.CHECKPOINT,
-      metadata: { modelUsage: { model: 'Claude-3.7-Sonnet', inputTokens: 100_000, outputTokens: 1000 } }
+      metadata: { modelUsage: { model: 'MODEL_PLACEHOLDER_M405', inputTokens: 100_000, outputTokens: 1000 } }
     },
     {
       type: StepType.CHECKPOINT,
-      metadata: { modelUsage: { model: 'GPT-OSS-120B', inputTokens: 65_000, outputTokens: 1000 } }
+      metadata: { modelUsage: { model: 'MODEL_PLACEHOLDER_M417', inputTokens: 65_000, outputTokens: 1000 } }
     }
   ];
   const r3 = processTrajectorySteps(crossModelBigDropSteps);
