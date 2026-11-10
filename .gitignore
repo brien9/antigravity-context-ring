@@ -10,8 +10,13 @@ dist/
 # OS & IDE
 .DS_Store
 Thumbs.db
-.workbuddy/
 
-# AI Workflow & Review Artifacts
+# Local workspace
+.workbuddy/
 .handoff/
-REVIEW_BUNDLE_*.md
+
+# 站点 GEO/SEO 文件（本地保留，不入库；启用 Pages 前需 git add -f 补回）
+docs/robots.txt
+docs/sitemap.xml
+docs/llms.txt
+docs/llms-full.txt

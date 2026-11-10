@@ -20,8 +20,6 @@
 
 <img src="assets/hero-showcase.jpg" alt="Antigravity Context Ring - 19px native inline context window and token usage indicator for Google Antigravity App with frosted-glass HUD tooltip" width="580" style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
 
-<sub>19×19px native micro-ring mounted directly beside the model selector · Silent ambient companion, sub-millisecond frosted-glass telemetry HUD on hover</sub>
-
 </div>
 
 ---
@@ -51,25 +49,18 @@ sh ./install.sh            # macOS / Linux
 
 ## 💡 Why Context Ring?
 
-During marathon autonomous coding sessions in Google Antigravity App, developers routinely hit a frustrating wall:
-- **The True Culprit Behind "Sudden Amnesia": 256K Forced Lossy Compression**:  
-  Many developers assume the model is randomly "hallucinating" or becoming dumber mid-task. The harsh reality is **Antigravity's black-box auto-compaction mechanism**. The moment a conversation reaches **256K tokens** (or 128K for Pro models), the client silently triggers background **forced compaction**.  
-  Crucially, this is **lossy compression**: nuanced architectural constraints, step-by-step reasoning, and debugging history are brutally summarized and pruned, turning a sharp assistant into an amnesiac overnight.
-- **Debunking the Myth: 256K is NOT the Model Limit**:  
-  It is vital to separate foundation model capabilities from client-side rate controls. **256K is never the model's actual context ceiling**. Modern Gemini and Claude APIs natively support 1M to 2M token windows, and upstream API endpoints never enforce a 256K ceiling. The 256K hard cap exists purely as a **client-side subscription throttling gate** deployed by Google to curb server GPU consumption and preserve high-frequency quota velocity.
-- **Flying Blind vs. Ground-Truth Radar**:  
-  Antigravity's native UI provides zero real-time context metrics and never warns before truncating your work. Context Ring refuses theoretical 1M/2M marketing illusions, locking onto the **actual 256K physical cliff edge**. It alerts you as you approach the danger zone (≥90% alert red) and tracks lossy compaction drops, empowering you to wrap up, branch, or hand off tasks *before* irreversible amnesia strikes.
+Foundation models natively support ~1M context, but the Antigravity client hard-caps truncation at **256K** (128K for some Pro models) and forces lossy compaction at that point. The native UI never shows remaining context and never warns before it happens.
 
-**Context Ring** distills real-time context awareness into a 19px native inline SVG ring, delivering ground-truth accuracy, seamless nativeness, and instantaneous speed:
+**Context Ring** turns that real cutoff into a 19px inline ring:
 
-| Dimension | Native Black Box / Heuristic Extensions | Antigravity Context Ring |
-| :--- | :--- | :--- |
-| **Denominator Baseline** | Relies on theoretical 1M/2M marketing numbers; ignores client-side 256K hard cap | **Aligned with physical 256K throttling limit**; warns before lossy compression and amnesia occur |
-| **Token Measurement** | Naive character estimation (`4 chars/token`); severely degrades with multilingual text & indented code | **Connect-RPC ground-truth telemetry**; reads `modelUsage` directly from Language Server (including Cache tokens) |
-| **Subagent Concurrency** | Subtasks invoking lightweight models corrupt the denominator, causing percentage spikes | **Three-tier model decoupling**; denominator capacity is strictly locked by the primary user-selected model (`selectedModel`) |
-| **UI Ergonomics** | Clunky external windows or verbose status bars that interrupt coding flow | **19px inline geometric alignment + Shadow DOM isolation**; adapts to dark/light theme, reveals HUD on hover |
-| **Session Switching & Resiliency** | White-screen delays on switch; resets to zero on temporary disconnects or host reloads | **L1 memory + L2 persistent dual-tier SWR**; 0ms instant display upon switching, never resets active values on disconnect |
-| **Host Safety & Upgrades** | Patches or unpacks `resources/app.asar`, risking breakage on host updates | **100% non-invasive CDP injection**; `resources/app.asar` remains untouched; ~18MB memory footprint |
+| Dimension | Antigravity Context Ring |
+| :--- | :--- |
+| **Denominator Baseline** | Mirrors the client's actual truncation limits (256K / 128K / 160K / 80K); warns before lossy compaction |
+| **Token Measurement** | **Connect-RPC snapshots** read `modelUsage` directly (incl. cache read/write tokens); no character estimation |
+| **Subagent Concurrency** | **Three-tier model decoupling**; capacity is locked solely by the UI-selected model (`selectedModel`) |
+| **UI Ergonomics** | **19px inline alignment + Shadow DOM isolation**; follows dark/light theme, reveals HUD on hover |
+| **Session Switching & Resiliency** | **L1 memory + L2 persistent dual-tier SWR**; 0ms on switch, never resets to zero on disconnect |
+| **Host Safety & Upgrades** | **100% non-invasive** CDP injection; `resources/app.asar` untouched; ~18MB footprint |
 
 ---
 
@@ -81,9 +72,9 @@ The ring progresses smoothly with context usage. Standard conversations follow a
 
 | 🟢 Healthy / Early Phase (`< 60%`) | 🟡 Transition / Moderate (`60% ~ 80%`) |
 | :---: | :---: |
-| <img src="assets/state-low.jpg" alt="Google Antigravity context usage low state (<60%) - native blue inline SVG ring" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"><br><sub>**Native Electric Blue (`#3b82f6`)**: Silent companion; Live measured: Gemini 4 Argon High · 18.0% (46.0K / 256.0K)</sub> | <img src="assets/state-medium.jpg" alt="Google Antigravity context usage medium state (60-80%) - amber warning ring" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"><br><sub>**Warm Amber (`#f59e0b`)**: Session entering deeper context; Live measured: Gemini 4 Argon Medium · 60.5% (154.8K / 256.0K)</sub> |
+| <img src="assets/state-low.jpg" alt="Google Antigravity context usage low state (<60%) - native blue inline SVG ring" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"> | <img src="assets/state-medium.jpg" alt="Google Antigravity context usage medium state (60-80%) - amber warning ring" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"> |
 | 🔴 Critical Threshold (`≥ 90%`) | 🟣 Compaction Triggered (`Compacted < 60%`) |
-| <img src="assets/state-critical.jpg" alt="Google Antigravity context limit critical state (>=90%) - approaching 128K/256K auto-compaction truncation threshold" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"><br><sub>**Pure Alert Red (`#ff2626`)**: Approaching truncation limit; Live measured: Gemini 4 Argon High · 95.5% (244.5K / 256.0K Approaching Truncation)</sub> | <img src="assets/state-compacted.jpg" alt="Google Antigravity auto-compaction triggered state - dual-track purple ring showing released context tokens" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"><br><sub>**Lavender Violet (`#a78bfa`)**: Compaction captured; Live measured: Gemini 4 Argon High · 16.7% (42.8K / 256.0K Released 220.1K)</sub> |
+| <img src="assets/state-critical.jpg" alt="Google Antigravity context limit critical state (>=90%) - approaching 128K/256K auto-compaction truncation threshold" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"> | <img src="assets/state-compacted.jpg" alt="Google Antigravity auto-compaction triggered state - dual-track purple ring showing released context tokens" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"> |
 
 ### 2. Split View Multi-Pane Isolation
 
@@ -147,30 +138,19 @@ flowchart TD
 ## ❓ Frequently Asked Questions (FAQ)
 
 <details>
-<summary><strong>Q1: Why does Antigravity trigger auto-compaction at 256K (or 128K)? Is 256K the actual model limit?</strong></summary>
+<summary><strong>Q1: How does Context Ring monitor real-time token usage in Google Antigravity without modifying the app.asar file?</strong></summary>
 
-> **A**: **Absolutely not. It is vital to separate foundation model capacity from client-tier quota strategy:**
-> 1. **256K is NOT the model limit**: Underlying models (such as Gemini and Claude) natively support 1M–2M context windows through their official APIs. The API never bottlenecks at 256K.
-> 2. **Client-side caps exist purely to control subscription costs**: Google locks the Antigravity desktop client to a 256K physical ceiling (128K for Pro models) solely to throttle GPU compute expenditure and prevent power users from burning through infrastructure quotas too quickly.
-> 3. **The true culprit behind amnesia is "lossy compression"**: Once 256K is hit, Antigravity triggers server-side Auto-Compaction. This is an aggressive, lossy summarization process that discards prior code nuances, directly causing Gemini to "lose its memory" and hallucinate late in a session.
->
-> Context Ring rejects 1M/2M vanity metrics, strictly anchoring the denominator to this real 256K tripwire so you retain full control before catastrophic context loss occurs.
+> **A**: The plugin uses a **100% non-invasive architecture**. It never unpacks, patches, or modifies host binaries or `resources/app.asar`. Instead, a lightweight background sidecar connects to the client runtime via the standard Chrome DevTools Protocol (CDP), injecting a zero-dependency vanilla JS microkernel. The sidecar queries the local Language Server via Connect-RPC for `modelUsage` metrics and attaches the inline SVG ring to the composer DOM. Host app updates remain completely frictionless, and uninstalling leaves zero residue.
 </details>
 
 <details>
-<summary><strong>Q2: How does Context Ring monitor real-time token usage in Google Antigravity without modifying the app.asar file?</strong></summary>
-
-> **A**: The plugin uses a **100% non-invasive architecture**. It never unpacks, patches, or modifies host binaries or `resources/app.asar`. Instead, a lightweight background sidecar connects to the client runtime via the standard Chrome DevTools Protocol (CDP), injecting a zero-dependency vanilla JS microkernel. The sidecar queries the local Language Server via Connect-RPC for hardware-level `modelUsage` metrics and attaches the inline SVG ring to the composer DOM. Host app updates remain completely frictionless, and uninstalling leaves zero residue.
-</details>
-
-<details>
-<summary><strong>Q3: When using concurrent subagents or Split View panes, how does Context Ring avoid token spikes and cross-pane pollution?</strong></summary>
+<summary><strong>Q2: When using concurrent subagents or Split View panes, how does Context Ring avoid token spikes and cross-pane pollution?</strong></summary>
 
 > **A**: Context Ring enforces **three-tier model decoupling** and **pane-isolated state trees** across frontend and backend. The denominator capacity is solely locked by the primary user-selected model (`selectedModel`), so subagents invoking lightweight helper models will never tamper with the main progress ratio. In the UI, each input container is managed independently (`Map<box, PaneRingInstance>`) and binds exclusively to its own React Fiber node, completely preventing cross-talk between split panes.
 </details>
 
 <details>
-<summary><strong>Q4: Does the background daemon affect Antigravity performance or consume significant memory?</strong></summary>
+<summary><strong>Q3: Does the background daemon affect Antigravity performance or consume significant memory?</strong></summary>
 
 > **A**: **Not at all**. The background Node.js sidecar daemon maintains an ultra-light footprint of approximately **~18MB of RAM** and near-**0% CPU** consumption. The frontend injection layer consists of lightweight native DOM and SVG elements with zero framework dependencies (no React/Vue overhead). Combined with a 250ms debounced event throttle and a host-bound watchdog that terminates automatically when the app closes, it introduces zero overhead to typing or client rendering.
 </details>
