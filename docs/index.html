@@ -15,14 +15,14 @@
   <meta property="og:url" content="https://brien9.github.io/antigravity-context-ring/">
   <meta property="og:title" content="Antigravity Context Ring - Native Inline Context Telemetry for Google Antigravity Desktop App">
   <meta property="og:description" content="Real-time Connect-RPC token telemetry, 256K physical truncation defense, 0ms instant switch, ~18MB footprint. Designed for Google Antigravity Desktop App.">
-  <meta property="og:image" content="https://brien9.github.io/antigravity-context-ring/assets/hero-showcase.png">
+  <meta property="og:image" content="https://brien9.github.io/antigravity-context-ring/assets/hero-showcase.jpg">
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:url" content="https://brien9.github.io/antigravity-context-ring/">
   <meta name="twitter:title" content="Antigravity Context Ring - 原生行内上下文指示器 (Google Antigravity 桌面端)">
   <meta name="twitter:description" content="专为 Google Antigravity 桌面客户端打造的原生 19px 行内圆环，锁定 256K 真实物理截断线，毫秒级毛玻璃 HUD 气泡告警。">
-  <meta name="twitter:image" content="https://brien9.github.io/antigravity-context-ring/assets/hero-showcase.png">
+  <meta name="twitter:image" content="https://brien9.github.io/antigravity-context-ring/assets/hero-showcase.jpg">
 
   <!-- GEO & LLM Machine-Readable Specifications -->
   <link rel="alternate" type="text/markdown" href="./llms.txt" title="LLMs Context">
@@ -247,15 +247,46 @@
       color: #fff;
     }
 
-    /* Hero Image Frame */
+    /* Hero Image Frame - App Window Showcase */
     .hero-media {
       margin-top: 10px;
       border-radius: var(--radius-lg);
       overflow: hidden;
       border: 1px solid var(--border);
       background: #0d111a;
-      box-shadow: var(--shadow-glow), 0 20px 40px rgba(0,0,0,0.6);
+      box-shadow: 0 0 50px rgba(0, 229, 255, 0.12), 0 20px 40px rgba(0,0,0,0.6);
       position: relative;
+    }
+    .window-bar {
+      background: rgba(22, 27, 34, 0.95);
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .window-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .dot-red { background: #ff5f56; }
+    .dot-yellow { background: #ffbd2e; }
+    .dot-green { background: #27c93f; }
+    .window-title {
+      font-size: 0.76rem;
+      color: #94a3b8;
+      font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+      margin-left: 8px;
+      letter-spacing: 0.02em;
+    }
+    .media-body {
+      background: #ffffff;
+      padding: 24px 20px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
     }
     .hero-media img {
       width: 100%;
@@ -266,7 +297,7 @@
       padding: 12px 18px;
       font-size: 0.84rem;
       color: var(--text-dim);
-      background: rgba(13, 17, 26, 0.9);
+      background: rgba(13, 17, 26, 0.95);
       border-top: 1px solid var(--border);
     }
 
@@ -410,7 +441,7 @@
     /* Dual-Track Color Engine Showcase */
     .color-states-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
       gap: 20px;
       margin-top: 32px;
     }
@@ -418,19 +449,36 @@
       background: var(--bg-card);
       border: 1px solid var(--border);
       border-radius: var(--radius-md);
-      padding: 20px;
+      padding: 20px 18px;
       text-align: center;
-      transition: all 0.2s ease;
+      transition: all 0.25s ease;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
     }
     .state-card:hover {
       border-color: rgba(255, 255, 255, 0.2);
+      transform: translateY(-3px);
     }
-    .state-card img {
-      max-width: 100%;
-      height: 70px;
-      object-fit: contain;
-      margin: 14px 0;
-      filter: drop-shadow(0 4px 12px rgba(0,0,0,0.5));
+    .state-img-frame {
+      background: #ffffff;
+      border-radius: var(--radius-sm);
+      padding: 10px 8px;
+      margin: 14px 0 12px 0;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s ease;
+    }
+    .state-card:hover .state-img-frame {
+      transform: scale(1.02);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), 0 0 15px rgba(255, 255, 255, 0.1);
+    }
+    .state-img-frame img {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 4px;
     }
     .state-name {
       font-size: 0.95rem;
@@ -441,6 +489,7 @@
     .state-desc {
       font-size: 0.82rem;
       color: var(--text-dim);
+      line-height: 1.4;
     }
 
     /* Table Styles */
@@ -621,7 +670,15 @@
 
     <!-- Hero Image Showcase -->
     <div class="hero-media">
-      <img src="assets/hero-showcase.png" alt="Antigravity Context Ring - 19px native inline context window indicator with frosted-glass HUD tooltip">
+      <div class="window-bar">
+        <span class="window-dot dot-red"></span>
+        <span class="window-dot dot-yellow"></span>
+        <span class="window-dot dot-green"></span>
+        <span class="window-title">Google Antigravity App — Live Composer View</span>
+      </div>
+      <div class="media-body">
+        <img src="assets/hero-showcase.jpg" alt="Antigravity Context Ring - 19px native inline context window indicator with frosted-glass HUD tooltip">
+      </div>
       <div class="hero-media-caption">
         平时静默陪伴，鼠标悬停毫秒级唤出毛玻璃监控气泡 · 精准显示当前消耗与 256K 物理节流上限
       </div>
@@ -697,28 +754,44 @@
 
       <div class="color-states-grid">
         <div class="state-card">
-          <span class="state-name" style="color: #00e5ff;">充裕安全 · 科技蓝</span>
-          <p class="state-desc">0% ~ 59% 容量充裕</p>
-          <img src="assets/state-low.png" alt="Context Ring Safe State">
-          <p class="state-desc">平时静默陪伴，上下文健康</p>
+          <div>
+            <span class="state-name" style="color: #00e5ff;">充裕安全 · 科技蓝</span>
+            <p class="state-desc">0% ~ 59% 容量充裕 · 静默陪伴</p>
+          </div>
+          <div class="state-img-frame">
+            <img src="assets/state-low.jpg" alt="Context Ring Safe State (Gemini 4 Argon High · 18.0% · 46.0K / 256.0K)">
+          </div>
+          <p class="state-desc">实机演示：Gemini 4 Argon · 18.0% 46K/256K</p>
         </div>
         <div class="state-card">
-          <span class="state-name" style="color: #f59e0b;">渐进警示 · 琥珀黄</span>
-          <p class="state-desc">60% ~ 89% 建议收敛</p>
-          <img src="assets/state-medium.png" alt="Context Ring Warning State">
-          <p class="state-desc">会话逐渐成熟，注意重构粒度</p>
+          <div>
+            <span class="state-name" style="color: #f59e0b;">渐进警示 · 琥珀黄</span>
+            <p class="state-desc">60% ~ 89% 建议收敛 · 留意单次载荷</p>
+          </div>
+          <div class="state-img-frame">
+            <img src="assets/state-medium.jpg" alt="Context Ring Warning State (Gemini 4 Argon Medium · 60.5% · 154.8K / 256.0K)">
+          </div>
+          <p class="state-desc">实机演示：Gemini 4 Argon · 60.5% 154.8K/256K</p>
         </div>
         <div class="state-card">
-          <span class="state-name" style="color: #ef4444;">极危临界 · 警戒红</span>
-          <p class="state-desc">≥ 90% 迫近截断</p>
-          <img src="assets/state-critical.png" alt="Context Ring Critical Danger State">
-          <p class="state-desc">高频光晕告警，立即保存/分叉</p>
+          <div>
+            <span class="state-name" style="color: #ef4444;">极危临界 · 警戒红</span>
+            <p class="state-desc">≥ 90% 迫近截断 · 建议收尾或新开</p>
+          </div>
+          <div class="state-img-frame">
+            <img src="assets/state-critical.jpg" alt="Context Ring Critical Danger State (Gemini 4 Argon High · 95.5% · 244.5K / 256.0K 接近截断)">
+          </div>
+          <p class="state-desc">实机演示：Gemini 4 Argon · 95.5% 接近截断</p>
         </div>
         <div class="state-card">
-          <span class="state-name" style="color: #c084fc;">全损压缩 · 极客亮紫</span>
-          <p class="state-desc">捕获 Auto-Compaction</p>
-          <img src="assets/state-compacted.png" alt="Context Ring Compacted State">
-          <p class="state-desc">标识历史已压缩，浮窗显式预警</p>
+          <div>
+            <span class="state-name" style="color: #c084fc;">全损压缩 · 极客亮紫</span>
+            <p class="state-desc">捕获 Auto-Compaction · 释放容量预警</p>
+          </div>
+          <div class="state-img-frame">
+            <img src="assets/state-compacted.jpg" alt="Context Ring Compacted State (Gemini 4 Argon High · 16.7% · 释放 220.1K)">
+          </div>
+          <p class="state-desc">实机演示：全损压缩捕获 · 释放 220.1K</p>
         </div>
       </div>
     </section>
@@ -795,9 +868,17 @@
         </p>
       </div>
       <div class="hero-media">
-        <img src="assets/split-view-showcase.png" alt="Antigravity Context Ring Multi-Pane Split View">
+        <div class="window-bar">
+          <span class="window-dot dot-red"></span>
+          <span class="window-dot dot-yellow"></span>
+          <span class="window-dot dot-green"></span>
+          <span class="window-title">Google Antigravity App — Multi-Pane Split View Isolation</span>
+        </div>
+        <div class="media-body" style="padding: 16px 14px;">
+          <img src="assets/split-view-showcase.png" alt="Antigravity Context Ring Multi-Pane Split View">
+        </div>
         <div class="hero-media-caption">
-          分屏对等常驻：左右分屏均拥有独立微圆环与气泡，草稿分屏显示 0%，真实会话持续同步
+          分屏对等常驻：左侧 Gemini 3.8 Flash (草稿/健康) 与右侧 Gemini 4 Argon (活跃/警戒) 互不干扰，React Fiber 状态树天然隔离
         </div>
       </div>
     </section>

@@ -14,7 +14,7 @@
 
 <br><br>
 
-<img src="assets/hero-showcase.png" alt="Antigravity Context Ring - 19px native inline context window and token usage indicator for Google Antigravity App with frosted-glass HUD tooltip" width="100%">
+<img src="assets/hero-showcase.jpg" alt="Antigravity Context Ring - 19px native inline context window and token usage indicator for Google Antigravity App with frosted-glass HUD tooltip" width="100%" style="border-radius: 8px; box-shadow: 0 4px 24px rgba(0,0,0,0.15);">
 
 <sub>挂载于模型选择器同级容器的 19×19px 原生微圆环 · 平时静默陪伴，悬停毫秒级唤出毛玻璃监控气泡</sub>
 
@@ -77,18 +77,18 @@ Context Ring 将上下文感知收敛为一颗 19px 的原生行内圆环，在�
 
 | 🟢 健康初期 (`< 60%`) | 🟡 注意过渡 (`60% ~ 80%`) |
 | :---: | :---: |
-| <img src="assets/state-low.png" alt="Google Antigravity context usage low state (<60%) - native blue inline SVG ring" width="380"><br><sub>**原生科技蓝 (`#3b82f6`)**：静默陪伴；新建未发消息的草稿态自动呈现半透明 `0.0K`</sub> | <img src="assets/state-medium.png" alt="Google Antigravity context usage medium state (60-80%) - amber warning ring" width="380"><br><sub>**琥珀温润黄 (`#f59e0b`)**：提示会话进入深水区，留意单次对话载荷</sub> |
+| <img src="assets/state-low.jpg" alt="Google Antigravity context usage low state (<60%) - native blue inline SVG ring" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"><br><sub>**原生科技蓝 (`#3b82f6`)**：静默陪伴；实测 Gemini 4 Argon High · 18.0% (46.0K / 256.0K)</sub> | <img src="assets/state-medium.jpg" alt="Google Antigravity context usage medium state (60-80%) - amber warning ring" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"><br><sub>**琥珀温润黄 (`#f59e0b`)**：提示会话进入深水区；实测 Gemini 4 Argon Medium · 60.5% (154.8K / 256.0K)</sub> |
 | 🔴 临限极危 (`≥ 90%`) | 🟣 历史已压缩 (`Compacted < 60%`) |
-| <img src="assets/state-critical.png" alt="Google Antigravity context limit critical state (>=90%) - approaching 128K/256K auto-compaction truncation threshold" width="380"><br><sub>**高穿透纯正红 (`#ff2626`)**：逼近平台物理截断阈值，建议及时收尾或开启新会话</sub> | <img src="assets/state-compacted.png" alt="Google Antigravity auto-compaction triggered state - dual-track purple ring showing released context tokens" width="380"><br><sub>**薰衣草亮紫 (`#a78bfa`)**：标识历史已触发过上下文压缩，气泡内展示释放容量</sub> |
+| <img src="assets/state-critical.jpg" alt="Google Antigravity context limit critical state (>=90%) - approaching 128K/256K auto-compaction truncation threshold" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"><br><sub>**高穿透纯正红 (`#ff2626`)**：逼近平台物理截断阈值；实测 Gemini 4 Argon High · 95.5% (244.5K / 256.0K 接近截断)</sub> | <img src="assets/state-compacted.jpg" alt="Google Antigravity auto-compaction triggered state - dual-track purple ring showing released context tokens" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"><br><sub>**薰衣草亮紫 (`#a78bfa`)**：全损压缩捕获；实测 Gemini 4 Argon High · 16.7% (42.8K / 256.0K 释放 220.1K)</sub> |
 
 ### 2. 多分屏独立隔离与实时联动 (Split View Isolation)
 
 深度适配多 Composer 并行工作流，每个可见输入框拥有独立的生命周期与状态机实例（`Map<box, PaneRingInstance>`）：
 
 <p align="center">
-  <img src="assets/split-view-showcase.png" alt="Google Antigravity Split View multi-pane context monitoring isolated via React Fiber state tree" style="max-width: 100%;">
+  <img src="assets/split-view-showcase.png" alt="Google Antigravity Split View multi-pane context monitoring isolated via React Fiber state tree" style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.1);">
   <br>
-  <em>多分屏实机：各分屏独立绑定 Fiber 状态机，草稿态与活跃态精准隔离，彻底杜绝跨屏串台</em>
+  <em>多分屏实机：左屏 Gemini 3.8 Flash (草稿/健康) 与右屏 Gemini 4 Argon (活跃/警戒) 互不干扰，React Fiber 状态树天然隔离</em>
 </p>
 
 * **防串台铁律**：各分屏仅绑定自身 Fiber 节点，绝不回退读取全局路由，彻底杜绝“在右侧新建草稿却误偷左侧会话数据”的跨屏污染。

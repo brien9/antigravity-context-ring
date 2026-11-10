@@ -14,7 +14,7 @@
 
 <br><br>
 
-<img src="assets/hero-showcase.png" alt="Antigravity Context Ring - 19px native inline context window and token usage indicator for Google Antigravity App with frosted-glass HUD tooltip" width="100%">
+<img src="assets/hero-showcase.jpg" alt="Antigravity Context Ring - 19px native inline context window and token usage indicator for Google Antigravity App with frosted-glass HUD tooltip" width="100%" style="border-radius: 8px; box-shadow: 0 4px 24px rgba(0,0,0,0.15);">
 
 <sub>19×19px native micro-ring mounted directly beside the model selector · Silent ambient companion, sub-millisecond frosted-glass telemetry HUD on hover</sub>
 
@@ -77,18 +77,18 @@ The ring progresses smoothly with context usage. Standard conversations follow a
 
 | 🟢 Healthy / Early Phase (`< 60%`) | 🟡 Transition / Moderate (`60% ~ 80%`) |
 | :---: | :---: |
-| <img src="assets/state-low.png" alt="Google Antigravity context usage low state (<60%) - native blue inline SVG ring" width="380"><br><sub>**Native Electric Blue (`#3b82f6`)**: Silent companion; fresh drafts with no messages display semi-transparent `0.0K`</sub> | <img src="assets/state-medium.png" alt="Google Antigravity context usage medium state (60-80%) - amber warning ring" width="380"><br><sub>**Warm Amber (`#f59e0b`)**: Signals session entering deeper context; monitor per-turn token payload</sub> |
+| <img src="assets/state-low.jpg" alt="Google Antigravity context usage low state (<60%) - native blue inline SVG ring" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"><br><sub>**Native Electric Blue (`#3b82f6`)**: Silent companion; Live measured: Gemini 4 Argon High · 18.0% (46.0K / 256.0K)</sub> | <img src="assets/state-medium.jpg" alt="Google Antigravity context usage medium state (60-80%) - amber warning ring" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"><br><sub>**Warm Amber (`#f59e0b`)**: Session entering deeper context; Live measured: Gemini 4 Argon Medium · 60.5% (154.8K / 256.0K)</sub> |
 | 🔴 Critical Threshold (`≥ 90%`) | 🟣 Compaction Triggered (`Compacted < 60%`) |
-| <img src="assets/state-critical.png" alt="Google Antigravity context limit critical state (>=90%) - approaching 128K/256K auto-compaction truncation threshold" width="380"><br><sub>**Pure Alert Red (`#ff2626`)**: Approaching physical truncation threshold; wrap up or branch session</sub> | <img src="assets/state-compacted.png" alt="Google Antigravity auto-compaction triggered state - dual-track purple ring showing released context tokens" width="380"><br><sub>**Lavender Violet (`#a78bfa`)**: Identifies compacted history; HUD displays reclaimed token capacity</sub> |
+| <img src="assets/state-critical.jpg" alt="Google Antigravity context limit critical state (>=90%) - approaching 128K/256K auto-compaction truncation threshold" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"><br><sub>**Pure Alert Red (`#ff2626`)**: Approaching truncation limit; Live measured: Gemini 4 Argon High · 95.5% (244.5K / 256.0K Approaching Truncation)</sub> | <img src="assets/state-compacted.jpg" alt="Google Antigravity auto-compaction triggered state - dual-track purple ring showing released context tokens" width="100%" style="border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);"><br><sub>**Lavender Violet (`#a78bfa`)**: Compaction captured; Live measured: Gemini 4 Argon High · 16.7% (42.8K / 256.0K Released 220.1K)</sub> |
 
 ### 2. Split View Multi-Pane Isolation
 
 Engineered for power users with multi-composer parallel workflows. Each visible input box is managed by an independent state-machine lifecycle (`Map<box, PaneRingInstance>`):
 
 <p align="center">
-  <img src="assets/split-view-showcase.png" alt="Google Antigravity Split View multi-pane context monitoring isolated via React Fiber state tree" style="max-width: 100%;">
+  <img src="assets/split-view-showcase.png" alt="Google Antigravity Split View multi-pane context monitoring isolated via React Fiber state tree" style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.1);">
   <br>
-  <em>Split View in action: each pane binds directly to its React Fiber node; drafts and active sessions remain strictly isolated with zero cross-talk</em>
+  <em>Split View in action: Left pane Gemini 3.8 Flash (draft/healthy) & right pane Gemini 4 Argon (active/alert) operate with zero cross-talk</em>
 </p>
 
 * **Zero Cross-Talk Guarantee**: Each pane binds directly to its corresponding Fiber node without falling back to global route state, preventing draft boxes on the right from reflecting data from active sessions on the left.
