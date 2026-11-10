@@ -15,7 +15,8 @@ const SOURCE = dirname(__filename);
 const HOME = process.env.USERPROFILE || process.env.HOME || homedir() || 'C:\\Users\\default';
 const PLUGINS_DIR = join(HOME, '.gemini', 'config', 'plugins');
 const TARGET_DIR = process.env.AGY_TEST_TARGET_DIR || join(PLUGINS_DIR, 'antigravity-context-ring');
-const CONFIG_FILE = process.env.AGY_TEST_CONFIG_FILE || join(HOME, '.gemini', 'config', 'config.json');
+const CONFIG_FILE = process.env.AGY_TEST_CONFIG_FILE || 
+  (process.env.AGY_TEST_TARGET_DIR ? join(process.env.AGY_TEST_TARGET_DIR, 'sandbox_config.json') : join(HOME, '.gemini', 'config', 'config.json'));
 
 const PLUGIN_KEY = 'antigravity-context-ring';
 

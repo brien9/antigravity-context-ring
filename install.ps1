@@ -1,4 +1,4 @@
-﻿param(
+param(
     [string]$CustomTargetDir = $env:AGY_TEST_TARGET_DIR,
     [string]$CustomConfigFile = $env:AGY_TEST_CONFIG_FILE
 )
@@ -10,7 +10,7 @@ $scriptDir = $PSScriptRoot
 $homeDir = [System.Environment]::GetFolderPath('UserProfile')
 $pluginsDir = Join-Path $homeDir ".gemini\config\plugins"
 $targetDir = if ($CustomTargetDir) { $CustomTargetDir } else { Join-Path $pluginsDir "antigravity-context-ring" }
-$configFile = if ($CustomConfigFile) { $CustomConfigFile } else { Join-Path $homeDir ".gemini\config\config.json" }
+$configFile = if ($CustomConfigFile) { $CustomConfigFile } elseif ($CustomTargetDir) { Join-Path $CustomTargetDir "sandbox_config.json" } else { Join-Path $homeDir ".gemini\config\config.json" }
 
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host "   Antigravity Context Ring Installer     " -ForegroundColor Cyan

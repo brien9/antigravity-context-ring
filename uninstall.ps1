@@ -1,4 +1,4 @@
-﻿# Antigravity Context Ring Uninstaller
+# Antigravity Context Ring Uninstaller
 param(
     [string]$CustomTargetDir = $env:AGY_TEST_TARGET_DIR,
     [string]$CustomConfigFile = $env:AGY_TEST_CONFIG_FILE
@@ -9,7 +9,7 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 
 $homeDir = [System.Environment]::GetFolderPath('UserProfile')
 $targetDir = if ($CustomTargetDir) { $CustomTargetDir } else { Join-Path $homeDir ".gemini\config\plugins\antigravity-context-ring" }
-$configFile = if ($CustomConfigFile) { $CustomConfigFile } else { Join-Path $homeDir ".gemini\config\config.json" }
+$configFile = if ($CustomConfigFile) { $CustomConfigFile } elseif ($CustomTargetDir) { Join-Path $CustomTargetDir "sandbox_config.json" } else { Join-Path $homeDir ".gemini\config\config.json" }
 
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host "   Antigravity Context Ring Uninstaller   " -ForegroundColor Cyan
