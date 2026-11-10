@@ -1,4 +1,4 @@
-# Antigravity Context Ring Uninstaller
+﻿# Antigravity Context Ring Uninstaller
 param(
     [string]$CustomTargetDir = $env:AGY_TEST_TARGET_DIR,
     [string]$CustomConfigFile = $env:AGY_TEST_CONFIG_FILE
