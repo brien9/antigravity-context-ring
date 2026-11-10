@@ -329,15 +329,15 @@ test('【最终封板 8】context-calculator: PLANNER_RESPONSE 携带 modelUsage
   assert.equal(result.contextLimit, 128_000, '容量限制必须重锚定为 gemini-2.5-pro 的 128K (Pro系列真实截断阈值)');
 });
 
-test('【最终封板 9】docs/llms.txt 克隆仓库地址统一为 uuo310', () => {
+test('【最终封板 9】docs/llms.txt 克隆仓库地址统一为当前活跃账号 brien9', () => {
   const llmsTxt = readFileSync(resolve(__dirname, '../docs/llms.txt'), 'utf8');
   assert.ok(
-    llmsTxt.includes('git clone https://github.com/uuo310/antigravity-context-ring.git'),
-    'docs/llms.txt 必须包含真实的 uuo310 仓库克隆地址'
+    llmsTxt.includes('git clone https://github.com/brien9/antigravity-context-ring.git'),
+    'docs/llms.txt 必须包含当前活跃的 brien9 仓库克隆地址'
   );
   assert.ok(
-    !llmsTxt.includes('https://github.com/brien9/antigravity-context-ring.git'),
-    'docs/llms.txt 绝不得包含旧的 brien9 克隆地址'
+    !llmsTxt.includes('https://github.com/uuo310/antigravity-context-ring.git'),
+    'docs/llms.txt 绝不得包含旧的 uuo310 残留链接'
   );
 });
 

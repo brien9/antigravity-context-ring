@@ -24,7 +24,7 @@ In Google Antigravity IDE, developers lack real-time visibility into active cont
 
 ## Installation & CLI Commands
 Clone repository:
-git clone https://github.com/uuo310/antigravity-context-ring.git
+git clone https://github.com/brien9/antigravity-context-ring.git
 cd antigravity-context-ring
 
 Install on Windows (PowerShell):
