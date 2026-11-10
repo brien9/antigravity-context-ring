@@ -14,7 +14,7 @@
 
 <br><br>
 
-<img src="assets/hero-showcase.png" alt="Antigravity Context Ring - 19px native inline context window and token usage indicator for Google Antigravity IDE with frosted-glass HUD tooltip" width="100%">
+<img src="assets/hero-showcase.png" alt="Antigravity Context Ring - 19px native inline context window and token usage indicator for Google Antigravity App with frosted-glass HUD tooltip" width="100%">
 
 <sub>挂载于模型选择器同级容器的 19×19px 原生微圆环 · 平时静默陪伴，悬停毫秒级唤出毛玻璃监控气泡</sub>
 

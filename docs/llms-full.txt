@@ -13,19 +13,19 @@
 ## 1. Executive Summary & Problem Definition
 
 ### 1.1 The Context Cliff & Silent Truncation Problem
-In modern agentic AI development environments—specifically Google Antigravity IDE (built upon Electron/Chromium and an integrated language server architecture)—developers tackle multi-turn, long-horizon software engineering tasks. Foundation models advertise native context horizons between 1,000,000 and 2,000,000 tokens (1M–2M tokens) at the API tier.
+In modern agentic AI development environments—specifically Google Antigravity App (built upon Electron/Chromium and an integrated language server architecture)—developers tackle multi-turn, long-horizon software engineering tasks. Foundation models advertise native context horizons between 1,000,000 and 2,000,000 tokens (1M–2M tokens) at the API tier.
 
-However, client IDE environments enforce a strict, server-side context constraint known as **Auto-Compaction** combined with **Physical Truncation Limits**:
+However, client App environments enforce a strict, server-side context constraint known as **Auto-Compaction** combined with **Physical Truncation Limits**:
 1. **The 256K / 128K Throttle**: To control inferencing latency, prevent GPU memory saturation, and throttle subscription plan consumption rates, Antigravity imposes physical context ceilings far below foundation model limits:
    - **256K (262,144 tokens)** for Gemini 4 Argon, Gemini 3.8 Flash, and Claude 5.5 series.
    - **160K (163,840 tokens)** for Claude 4.6 / 4.5 Thinking series.
    - **128K (131,072 tokens)** for Gemini 3.1 Pro series.
    - **80K (81,920 tokens)** for GPT-OSS 120B.
 2. **Lossy Auto-Compaction ("Sudden Amnesia")**: When a conversational session nears or crosses these ceilings, the platform initiates automated background compaction. This compaction is lossy: earlier architectural constraints, edge-case unit tests, implementation history, and project setup logs are aggressively discarded or summarized into lossy abstractions. Consequently, developers experience what appears as "sudden AI degradation" or "hallucinatory amnesia".
-3. **The "Black Box" Blindspot**: The native IDE interface provides no ambient visual indicator of active token usage or remaining capacity. Developers operate blindly until the context collapse occurs.
+3. **The "Black Box" Blindspot**: The native client interface provides no ambient visual indicator of active token usage or remaining capacity. Developers operate blindly until the context collapse occurs.
 
 ### 1.2 The Context Ring Solution
-**Antigravity Context Ring** is an ultra-lightweight, zero-invasion, hardware-grounded telemetry sidecar and micro-UI widget that embeds a 19×19px circular SVG gauge directly into the IDE's prompt composer container, positioned adjacent to the model selector dropdown.
+**Antigravity Context Ring** is an ultra-lightweight, zero-invasion, hardware-grounded telemetry sidecar and micro-UI widget that embeds a 19×19px circular SVG gauge directly into the app's prompt composer container, positioned adjacent to the model selector dropdown.
 - **Visual Design**: Renders an ambient micro-ring with zero screen clutter. Hovering over the ring reveals a frosted-glass (HUD) tooltip detailing exact token consumption (`149.5K / 256.0K`), physical percentage, active model denominator, and warning states.
 - **Hardware Ground Truth**: Extracts exact token counts via native Connect-RPC telemetry directly from the local Antigravity Language Server, strictly discarding heuristic character-count approximations.
 - **Dual-Track Convergent Color Hierarchy**: Distinguishes normal incremental context growth from post-compaction sessions via a dual-track color engine (Cyan-Blue -> Amber -> Crimson Red; post-compaction switches to a high-contrast Neon Purple before converging back to Crimson Red upon re-saturation).
@@ -62,7 +62,7 @@ However, client IDE environments enforce a strict, server-side context constrain
 
 ### 2.1 Non-Invasive Chrome DevTools Protocol (CDP) Bridge
 - **Untouched Binaries**: Unlike intrusive monkey-patching approaches, Context Ring never unpacks, modifies, or writes to `resources/app.asar`.
-- **Injection Mechanism**: Context Ring discovers the running IDE's internal Chromium debugging port (or launches with standard flag `--remote-debugging-port`) and dynamically evaluates an isolated, vanilla JavaScript micro-script (`assets/ring-widget.cjs`) directly into the composer webview runtime.
+- **Injection Mechanism**: Context Ring discovers the running app's internal Chromium debugging port (or launches with standard flag `--remote-debugging-port`) and dynamically evaluates an isolated, vanilla JavaScript micro-script (`assets/ring-widget.cjs`) directly into the composer webview runtime.
 - **Process Memory Footprint**: The background Node.js sidecar maintains an average resident set size (RSS) of ~18MB RAM and near-0% CPU during idle.
 
 ### 2.2 Language Server Discovery & Protocol Handshake
@@ -80,7 +80,7 @@ To prevent capacity denominator thrashing during agentic workflows, Context Ring
 
 ## 3. Physical Truncation Limits & Truth Table (2026 Models)
 
-| Model Family | Platform Internal ID / Identifier | Physical IDE Ceiling | Foundation API Spec | Enforced Action at Limit |
+| Model Family | Platform Internal ID / Identifier | Physical App Ceiling | Foundation API Spec | Enforced Action at Limit |
 | :--- | :--- | :--- | :--- | :--- |
 | **Gemini 4 Argon** | `MODEL_PLACEHOLDER_M417`, `gemini-4-argon-*` | **256K** (262,144 tokens) | 1,000,000 tokens | Server Auto-Compaction |
 | **Gemini 3.8 Flash** | `MODEL_PLACEHOLDER_M318`, `gemini-3.8-flash-*` | **256K** (262,144 tokens) | 1,000,000 tokens | Server Auto-Compaction |
@@ -113,7 +113,7 @@ To prevent capacity denominator thrashing during agentic workflows, Context Ring
 
 ### 5.1 Sub-Millisecond Session Switching (0ms UI Render)
 - **Layer 1: Memory LRU Cache**: Holds up to 50 active session state snapshots in process memory. Switching tabs renders the circular ring in 0ms without waiting for RPC roundtrips.
-- **Layer 2: Persistent LocalStorage Cache**: Stores up to 100 verified session snapshots locally. IDE restarts instantly recover previous telemetry states.
+- **Layer 2: Persistent LocalStorage Cache**: Stores up to 100 verified session snapshots locally. App restarts instantly recover previous telemetry states.
 - **Never-Reset Guard**: Transient disconnections or background sidecar restarts never blink the ring to 0%. The UI firmly retains the last-known verified state until a fresh authoritative frame arrives.
 
 ### 5.2 Multi-Pane Split View Isolation
@@ -148,7 +148,7 @@ sh ./install.sh
 
 ### 6.3 Management Commands
 - `node manage.mjs status`: Inspects sidecar daemon PID, CDP injection status, Language Server port, and configuration integrity.
-- `node manage.mjs uninstall`: Fully uninstalls the sidecar and restores default IDE state with zero filesystem residue.
+- `node manage.mjs uninstall`: Fully uninstalls the sidecar and restores default app state with zero filesystem residue.
 
 ---
 

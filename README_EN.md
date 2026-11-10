@@ -2,7 +2,7 @@
 
 # Antigravity Context Ring
 
-**Native inline context window monitor & token usage telemetry for Google Antigravity IDE**  
+**Native inline context window monitor & token usage telemetry for Google Antigravity App**  
 *Zero-invasion, Connect-RPC ground-truth, 0ms instant switch, ~18MB footprint.*
 
 [![Release](https://img.shields.io/badge/Release-v1.1.0-10b981?style=flat-square)](https://github.com/brien9/antigravity-context-ring/releases)
@@ -14,7 +14,7 @@
 
 <br><br>
 
-<img src="assets/hero-showcase.png" alt="Antigravity Context Ring - 19px native inline context window and token usage indicator for Google Antigravity IDE with frosted-glass HUD tooltip" width="100%">
+<img src="assets/hero-showcase.png" alt="Antigravity Context Ring - 19px native inline context window and token usage indicator for Google Antigravity App with frosted-glass HUD tooltip" width="100%">
 
 <sub>19×19px native micro-ring mounted directly beside the model selector · Silent ambient companion, sub-millisecond frosted-glass telemetry HUD on hover</sub>
 
@@ -24,7 +24,7 @@
 
 ## ⚡ Quick Start
 
-Zero external dependencies. Hot-injected into running Antigravity IDE within seconds.
+Zero external dependencies. Hot-injected into running Antigravity App within seconds.
 
 > [!TIP]
 > **🤖 Agent Auto-Install (Recommended · Zero Terminal Interaction)**  
@@ -47,7 +47,7 @@ sh ./install.sh            # macOS / Linux
 
 ## 💡 Why Context Ring?
 
-During marathon autonomous coding sessions in Google Antigravity IDE, developers routinely hit a frustrating wall:
+During marathon autonomous coding sessions in Google Antigravity App, developers routinely hit a frustrating wall:
 - **The True Culprit Behind "Sudden Amnesia": 256K Forced Lossy Compression**:  
   Many developers assume the model is randomly "hallucinating" or becoming dumber mid-task. The harsh reality is **Antigravity's black-box auto-compaction mechanism**. The moment a conversation reaches **256K tokens** (or 128K for Pro models), the client silently triggers background **forced compaction**.  
   Crucially, this is **lossy compression**: nuanced architectural constraints, step-by-step reasoning, and debugging history are brutally summarized and pruned, turning a sharp assistant into an amnesiac overnight.
@@ -65,7 +65,7 @@ During marathon autonomous coding sessions in Google Antigravity IDE, developers
 | **Subagent Concurrency** | Subtasks invoking lightweight models corrupt the denominator, causing percentage spikes | **Three-tier model decoupling**; denominator capacity is strictly locked by the primary user-selected model (`selectedModel`) |
 | **UI Ergonomics** | Clunky external windows or verbose status bars that interrupt coding flow | **19px inline geometric alignment + Shadow DOM isolation**; adapts to dark/light theme, reveals HUD on hover |
 | **Session Switching & Resiliency** | White-screen delays on switch; resets to zero on temporary disconnects or host reloads | **L1 memory + L2 persistent dual-tier SWR**; 0ms instant display upon switching, never resets active values on disconnect |
-| **Host Safety & Upgrades** | Patches or unpacks `resources/app.asar`, risking breakage on host IDE updates | **100% non-invasive CDP injection**; `resources/app.asar` remains untouched; ~18MB memory footprint |
+| **Host Safety & Upgrades** | Patches or unpacks `resources/app.asar`, risking breakage on host updates | **100% non-invasive CDP injection**; `resources/app.asar` remains untouched; ~18MB memory footprint |
 
 ---
 
@@ -100,7 +100,7 @@ Engineered for power users with multi-composer parallel workflows. Each visible 
 
 ```mermaid
 flowchart TD
-    subgraph AntigravityHost["Google Antigravity IDE Host"]
+    subgraph AntigravityHost["Google Antigravity Host App"]
         LS["Language Server (Connect-RPC)"]
         Fiber["React Fiber State Tree (agentStateProvider)"]
         UI["Composer Input Box Container (Flexbox DOM)"]
@@ -156,7 +156,7 @@ flowchart TD
 <details>
 <summary><strong>Q2: How does Context Ring monitor real-time token usage in Google Antigravity without modifying the app.asar file?</strong></summary>
 
-> **A**: The plugin uses a **100% non-invasive architecture**. It never unpacks, patches, or modifies host binaries or `resources/app.asar`. Instead, a lightweight background sidecar connects to the IDE runtime via the standard Chrome DevTools Protocol (CDP), injecting a zero-dependency vanilla JS microkernel. The sidecar queries the local Language Server via Connect-RPC for hardware-level `modelUsage` metrics and attaches the inline SVG ring to the composer DOM. Host IDE updates remain completely frictionless, and uninstalling leaves zero residue.
+> **A**: The plugin uses a **100% non-invasive architecture**. It never unpacks, patches, or modifies host binaries or `resources/app.asar`. Instead, a lightweight background sidecar connects to the client runtime via the standard Chrome DevTools Protocol (CDP), injecting a zero-dependency vanilla JS microkernel. The sidecar queries the local Language Server via Connect-RPC for hardware-level `modelUsage` metrics and attaches the inline SVG ring to the composer DOM. Host app updates remain completely frictionless, and uninstalling leaves zero residue.
 </details>
 
 <details>
@@ -168,7 +168,7 @@ flowchart TD
 <details>
 <summary><strong>Q4: Does the background daemon affect Antigravity performance or consume significant memory?</strong></summary>
 
-> **A**: **Not at all**. The background Node.js sidecar daemon maintains an ultra-light footprint of approximately **~18MB of RAM** and near-**0% CPU** consumption. The frontend injection layer consists of lightweight native DOM and SVG elements with zero framework dependencies (no React/Vue overhead). Combined with a 250ms debounced event throttle and a host-bound watchdog that terminates automatically when the IDE closes, it introduces zero overhead to typing or editor rendering.
+> **A**: **Not at all**. The background Node.js sidecar daemon maintains an ultra-light footprint of approximately **~18MB of RAM** and near-**0% CPU** consumption. The frontend injection layer consists of lightweight native DOM and SVG elements with zero framework dependencies (no React/Vue overhead). Combined with a 250ms debounced event throttle and a host-bound watchdog that terminates automatically when the app closes, it introduces zero overhead to typing or client rendering.
 </details>
 
 ---
