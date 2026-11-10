@@ -23,6 +23,11 @@ function jsonGet(port, path) {
           reject(e);
         }
       });
+      // 响应中途断开时 timeout 不再触发，显式结算防止 sync 巡检永久卡死在 syncInFlight
+      res.on('error', reject);
+      res.on('close', () => {
+        if (!res.complete) reject(new Error('Response aborted'));
+      });
     });
     req.on('error', reject);
     req.setTimeout(2000, () => req.destroy(new Error('Timeout')));

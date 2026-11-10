@@ -72,11 +72,19 @@ export function isCandidateServerLine(line) {
 /**
  * 探活指定端口与 TLS 组合
  */
-function probePort(port, csrfToken, useTls, timeoutMs = 2000) {
+export function probePort(port, csrfToken, useTls, timeoutMs = 2000) {
   if (!Number.isInteger(port) || port <= 0 || port > 65535 || typeof csrfToken !== 'string') {
     return Promise.resolve(false);
   }
-  return new Promise((resolve) => {
+  return new Promise((rawResolve) => {
+    // 单次结算守卫：响应中途断开时 socket 已销毁、timeout 不再触发，必须由 close 兜底结算，
+    // 否则 inFlightDiscovery 永久挂起，后续所有发现请求都会复用这个死 Promise
+    let settled = false;
+    const resolve = (val) => {
+      if (settled) return;
+      settled = true;
+      rawResolve(val);
+    };
     try {
       const transport = useTls ? https : http;
       const postData = JSON.stringify({
@@ -110,6 +118,10 @@ function probePort(port, csrfToken, useTls, timeoutMs = 2000) {
           } else {
             resolve(false);
           }
+        });
+        res.on('error', () => resolve(false));
+        res.on('close', () => {
+          if (!res.complete) resolve(false);
         });
       });
 

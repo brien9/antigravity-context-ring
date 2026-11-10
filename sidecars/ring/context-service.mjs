@@ -1,5 +1,5 @@
 import { discoverLanguageServer } from './ls-discovery.mjs';
-import { rpcCall } from './rpc-client.mjs';
+import { rpcCall, isRetryableRpcError } from './rpc-client.mjs';
 import { processTrajectorySteps } from './context-calculator.mjs';
 
 const memoryCache = new Map();
@@ -208,15 +208,21 @@ export function getStepFingerprint(s) {
 
 /**
  * 带单次重连自愈的 RPC 调用封装（配合 ls-discovery 乐观缓存）
+ * 仅连接级故障或 CSRF 鉴权失败才强制重新发现，业务错误（如 404 会话不存在）直接抛出，
+ * 避免每次轮询都拉起 PowerShell/netstat 全量扫描却依然失败的空转。
+ * @param {Object} [deps] - 可注入依赖（仅供测试）：{ rpcCall, discoverLanguageServer }
  */
-async function rpcCallWithRetry(lsRef, method, params, timeoutMs) {
+export async function rpcCallWithRetry(lsRef, method, params, timeoutMs, deps = {}) {
+  const call = deps.rpcCall || rpcCall;
+  const discover = deps.discoverLanguageServer || discoverLanguageServer;
   try {
-    return await rpcCall(lsRef.current, method, params, timeoutMs);
+    return await call(lsRef.current, method, params, timeoutMs);
   } catch (err) {
-    const refreshedLs = await discoverLanguageServer(true);
+    if (!isRetryableRpcError(err)) throw err;
+    const refreshedLs = await discover(true);
     if (!refreshedLs) throw err;
     lsRef.current = refreshedLs;
-    return await rpcCall(lsRef.current, method, params, timeoutMs);
+    return await call(lsRef.current, method, params, timeoutMs);
   }
 }
 
