@@ -176,7 +176,7 @@ var __agRingCacheModule = (function() {
   function getRingColor(ratio, isCompressed = false) {
     const r = (typeof ratio === 'number' && Number.isFinite(ratio)) ? ratio : 0;
     if (r < 0.60) {
-      return isCompressed ? '#a78bfa' : '#3b82f6'; // 0% ~ 60%: 压缩态薰衣草亮紫 / 常规态原生科技蓝（安全期）
+      return isCompressed ? '#a78bfa' : 'var(--ring-bar)'; // 0% ~ 60%: 压缩态薰衣草亮紫 / 常规态跟随 CSS 变量自适应（安全期）
     } else if (r < 0.80) {
       return '#f59e0b'; // 60% ~ 80%: 琥珀黄（注意期，双轨汇流）
     } else if (r < 0.90) {
@@ -449,7 +449,7 @@ function installAgContextRingWidget() {
     usedK: '0.0K',
     limit: 256000,
     limitK: '256.0K',
-    tooltip: '0.0% · 0.0K / 256.0K 上下文已使用',
+    tooltip: '新会话 · 0.0K / 256.0K 上下文未占用',
     isDraft: true,
   });
 
@@ -822,7 +822,7 @@ function installAgContextRingWidget() {
     const ringEl = root.getElementById('context-ring');
     if (!bar || !tooltipText || !ringEl) return;
 
-    const C = 2 * Math.PI * 7.1; // ~44.611
+    const C = 2 * Math.PI * 7.25; // ~45.553
     bar.style.strokeDasharray = `${C} ${C}`;
 
     if (data.isPending) {
@@ -935,9 +935,8 @@ function installAgContextRingWidget() {
     // 优先级 1：草稿态防御（稳定 0% 基准，绝不触碰网络）
     if (isDraftView(inst.box, totalPanes)) {
       inst.lastConversationId = null;
-      inst.currentData = null;
       inst.consecutiveFailures = 0;
-      updatePaneView(inst, getDraftSnapshot(inst.box, inst.model), true);
+      updatePaneView(inst, getDraftSnapshot());
       scheduleNextPaneSync(inst, 5000);
       return;
     }
@@ -1153,8 +1152,8 @@ function installAgContextRingWidget() {
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          width: 19px;
-          height: 19px;
+          width: 18px;
+          height: 18px;
           cursor: default;
           position: relative;
           user-select: none;
@@ -1175,12 +1174,12 @@ function installAgContextRingWidget() {
         .ring-bg {
           fill: none;
           stroke: var(--ring-track);
-          stroke-width: 2.0;
+          stroke-width: 1.9;
         }
         .ring-bar {
           fill: none;
           stroke: var(--ring-bar);
-          stroke-width: 2.0;
+          stroke-width: 1.9;
           stroke-linecap: round;
           transition: stroke-dashoffset 240ms ease, stroke 300ms ease, opacity 200ms ease;
         }
@@ -1225,10 +1224,10 @@ function installAgContextRingWidget() {
         }
       </style>
       <div class="ring-box" id="ring-container">
-        <div class="context-ring" id="context-ring">
+        <div class="context-ring unready" id="context-ring">
           <svg class="ring-svg" viewBox="0 0 18 18">
-            <circle class="ring-bg" cx="9" cy="9" r="7.1" />
-            <circle class="ring-bar" id="ring-bar" cx="9" cy="9" r="7.1" />
+            <circle class="ring-bg" cx="9" cy="9" r="7.25" />
+            <circle class="ring-bar" id="ring-bar" cx="9" cy="9" r="7.25" />
           </svg>
         </div>
         <div class="tooltip" id="tooltip" hidden>
@@ -1240,10 +1239,6 @@ function installAgContextRingWidget() {
 
     inst.node = node;
     inst.root = root;
-
-    if (flexContainer && modelBranch) {
-      flexContainer.insertBefore(node, modelBranch.nextSibling);
-    }
 
     const container = root.getElementById('ring-container');
     const tooltip = root.getElementById('tooltip');
@@ -1279,11 +1274,11 @@ function installAgContextRingWidget() {
 
     bindPaneAgentStateListener(inst);
 
-    // 挂载初态同步：0 毫秒渲染稳固态，杜绝任何空白闪烁与旧数据残留
+    // 挂载初态同步：在插入 DOM 前完成初态计算与渲染，杜绝任何满环首帧闪烁与回流动画
     if (isDraftView(box, totalPanes)) {
       inst.lastConversationId = null;
       inst.currentData = null;
-      updatePaneView(inst, getDraftSnapshot(box, model), true);
+      updatePaneView(inst, getDraftSnapshot(), true);
     } else {
       const cid = getActiveConversationId(box, totalPanes);
       if (!cid) {
@@ -1291,6 +1286,7 @@ function installAgContextRingWidget() {
         inst.currentData = null;
         updatePaneView(inst, getUnresolvedSnapshot(), true);
       } else {
+        inst.lastConversationId = cid;
         const cached = getCachedSnapshot(cid);
         if (cached) {
           updatePaneView(inst, cached, true);
@@ -1308,6 +1304,10 @@ function installAgContextRingWidget() {
           }
         }
       }
+    }
+
+    if (flexContainer && modelBranch) {
+      flexContainer.insertBefore(node, modelBranch.nextSibling);
     }
 
     // 新挂载或重挂载分屏立即触发一次普通后台校准；历史分母由真实轨迹驱动，草稿直接本地重算

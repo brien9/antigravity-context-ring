@@ -933,8 +933,8 @@ test('【回归 11】双轨收束汇流色彩流转 (Dual-Track Convergent Color
   assert.equal(typeof getRingColor, 'function', 'getRingColor 必须作为核心方法导出');
 
   // 1. 正常轨道（未压缩）
-  assert.equal(getRingColor(0.00, false), '#3b82f6', '正常轨道 0% 必须为原生蓝');
-  assert.equal(getRingColor(0.59, false), '#3b82f6', '正常轨道 59% 必须为原生蓝');
+  assert.equal(getRingColor(0.00, false), 'var(--ring-bar)', '正常轨道 0% 必须自适应 CSS 变量');
+  assert.equal(getRingColor(0.59, false), 'var(--ring-bar)', '正常轨道 59% 必须自适应 CSS 变量');
   assert.equal(getRingColor(0.60, false), '#f59e0b', '正常轨道 60% 必须为琥珀黄');
   assert.equal(getRingColor(0.79, false), '#f59e0b', '正常轨道 79% 必须为琥珀黄');
   assert.equal(getRingColor(0.80, false), '#f97316', '正常轨道 80% 必须为暖橙红');
@@ -953,7 +953,7 @@ test('【回归 11】双轨收束汇流色彩流转 (Dual-Track Convergent Color
   assert.equal(getRingColor(1.00, true), '#ff2626', '压缩轨道 100% 必须汇入纯正红（极危截断期）');
 
   // 3. 异常非有限数输入安全兜底（回退至 0% 安全色，绝不误报极危红）
-  assert.equal(getRingColor(NaN, false), '#3b82f6', '正常轨道传入 NaN 应安全回退至原生蓝');
+  assert.equal(getRingColor(NaN, false), 'var(--ring-bar)', '正常轨道传入 NaN 应安全回退至自适应 CSS 变量');
   assert.equal(getRingColor(undefined, true), '#a78bfa', '压缩轨道传入 undefined 应安全回退至薰衣草亮紫');
 });
 
@@ -1174,6 +1174,20 @@ test('【回归 15】会话识别失败不得伪装成新草稿 0%', () => {
     /if \(!cid\) \{\s*inst\.consecutiveFailures = 0;\s*updatePaneView\(inst, getDraftSnapshot/,
     'CID 缺失不得继续回退为 0% 新会话'
   );
+
+  // 顺手加固 4 细节防回归断言：
+  // 1. 亚像素对齐：.ring-box 必须为 18px 消除半像素边界
+  assert.match(widgetSource, /\.ring-box\s*\{[^}]*width:\s*18px;[^}]*height:\s*18px;/s, '.ring-box 必须为 18px × 18px');
+  // 2. 首帧防闪烁：HTML 模板默认 unready 且初态 updatePaneView 在 insertBefore 之前执行
+  assert.match(widgetSource, /<div class="context-ring unready" id="context-ring">/, 'HTML 模板必须默认携带 unready');
+  const mountInitialUpdatePos = widgetSource.indexOf('// 挂载初态同步：在插入 DOM 前完成初态计算与渲染');
+  const insertBeforePos = widgetSource.indexOf('flexContainer.insertBefore(node, modelBranch.nextSibling);');
+  assert.ok(mountInitialUpdatePos !== -1 && insertBeforePos !== -1 && mountInitialUpdatePos < insertBeforePos, '挂载初态同步必须在 insertBefore 之前执行');
+  // 3. 浅色模式 CSS 变量不被内联样式覆盖
+  assert.match(widgetSource, /return isCompressed \? '#a78bfa' : 'var\(--ring-bar\)';/, 'getRingColor 常规低位态必须返回 var(--ring-bar)');
+  // 4. 草稿态轮询去 force 并对齐 tooltip 命中 diff 守卫
+  assert.match(widgetSource, /tooltip:\s*'新会话 · 0\.0K \/ 256\.0K 上下文未占用'/s, 'DRAFT_SNAPSHOT tooltip 必须对齐');
+  assert.match(widgetSource, /if \(isDraftView\(inst\.box, totalPanes\)\) \{\s*inst\.lastConversationId = null;\s*inst\.consecutiveFailures = 0;\s*updatePaneView\(inst, getDraftSnapshot\(\)\);\s*scheduleNextPaneSync\(inst, 5000\);/s, '草稿态轮询去 force 并保留 currentData');
 });
 
 test('【回归 16】PowerShell 配置更新必须兼容已存在的空插件对象 {}', () => {
