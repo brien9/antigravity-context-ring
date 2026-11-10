@@ -1,0 +1,26 @@
+# Antigravity Context Ring (Full Specification)
+
+## Project Overview
+Antigravity Context Ring is a developer tooling extension engineered for Google Antigravity Desktop App. It addresses context visibility in long-running agentic coding workflows by surface-mounting an inline 19px telemetry indicator inside the active composer interface.
+
+## System Architecture
+1. Daemon Layer (Sidecar Node.js Process, ~18MB):
+   - ls-discovery: Discovers local Language Server port and CSRF authentication token via process table inspection.
+   - rpc-client: Communicates via Connect-RPC to retrieve conversation checkpoints and modelUsage snapshots across multi-step agent trajectories.
+   - context-calculator: Maps consumed tokens to model-specific and host-enforced limits (256K auto-compaction boundary).
+   - runtime-bridge: Injects and orchestrates the frontend widget through Chrome DevTools Protocol (CDP).
+
+2. Frontend Microkernel (ring-widget.cjs):
+   - Rendered using native SVG inside an isolated Shadow DOM container.
+   - Direct React Fiber binding via agentStateProvider ensures zero cross-talk between split panes.
+   - Dual-tier SWR caching (50 in-memory LRU + 100 LocalStorage entries) enables 0ms session switching without flickering or zero-reset.
+
+## Technical Comparison Matrix
+- Native Host UI: Minimalist design, context telemetry hidden, auto-compaction triggers automatically.
+- Heuristic Character Estimation: Fast, but inaccurate for codebases and incapable of distinguishing cache read tokens from new input tokens.
+- Context Ring (RPC Telemetry): True physical tokens from modelUsage, explicit 256K truncation warning, zero file modifications to app.asar.
+
+## Supported Environments
+- OS: Windows, macOS, Linux
+- Runtime: Node.js 18+
+- Host: Google Antigravity Desktop App

@@ -1,0 +1,21 @@
+User-agent: *
+Allow: /
+
+# 允许主流 AI 搜索引擎索引
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: Claude-SearchBot
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+# 限制离线模型训练的大规模非搜索抓取
+User-agent: GPTBot
+Disallow: /
+
+User-agent: ClaudeBot
+Disallow: /
+
+Sitemap: https://brien9.github.io/antigravity-context-ring/sitemap.xml

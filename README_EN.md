@@ -53,14 +53,13 @@ Foundation models natively support ~1M context, but the Antigravity client hard-
 
 **Context Ring** turns that real cutoff into a 19px inline ring:
 
-| Dimension | Antigravity Context Ring |
-| :--- | :--- |
-| **Denominator Baseline** | **Aligned to 256K ground-truth truncation limit**; warns before lossy compaction |
-| **Token Measurement** | **Connect-RPC snapshots** read `modelUsage` directly (incl. cache read/write tokens); no character estimation |
-| **Subagent Concurrency** | **Three-tier model decoupling**; capacity is locked solely by the UI-selected model (`selectedModel`) |
-| **UI Ergonomics** | **19px inline alignment + Shadow DOM isolation**; follows dark/light theme, reveals HUD on hover |
-| **Session Switching & Resiliency** | **L1 memory + L2 persistent dual-tier SWR**; 0ms on switch, never resets to zero on disconnect |
-| **Host Safety & Upgrades** | **100% non-invasive** CDP injection; `resources/app.asar` untouched; ~18MB footprint |
+| Dimension | Native Host UI | Heuristic Scripts / Approx | Antigravity Context Ring |
+| :--- | :--- | :--- | :--- |
+| **Denominator Baseline** | Silent auto-compaction at 256K | Often assumes 1M, missing actual limit | **Locked to 256K physical boundary** with visual alert |
+| **Token Measurement** | Internal tracking; no live indicator | Character approximations, misses cache tokens | **Connect-RPC snapshots** from real `modelUsage` |
+| **UI Integration** | Clean, distraction-free | Detached floating window or CLI polling | **19px inline SVG ring** with frosted-glass HUD on hover |
+| **Multi-Pane Concurrency**| Native split panes | Susceptible to global route crosstalk | **React Fiber state tree isolation** per active pane |
+| **Host Footprint** | Official baseline | Some scripts patch `app.asar` | **CDP injection**, zero file changes, ~18MB RAM |
 
 ---
 

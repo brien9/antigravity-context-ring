@@ -1,0 +1,24 @@
+# Antigravity Context Ring
+
+> Native inline context window telemetry & 256K physical truncation monitor for Google Antigravity Desktop App.
+
+## Overview
+Antigravity Context Ring provides real-time token telemetry for the Google Antigravity Desktop App. It reads directly from local Language Server Connect-RPC snapshots, displaying context consumption against the client's 256K auto-compaction threshold via a non-invasive 19px inline ring widget.
+
+## Key Technical Specifications
+- Ground-Truth Telemetry: Connect-RPC modelUsage parsing including input, output, and cache read/creation tokens without character approximations.
+- Truncation Baseline: Aligned with the 256K physical auto-compaction boundary of the desktop client.
+- Integration Method: Chrome DevTools Protocol (CDP) injection; zero modification to binary or resources/app.asar.
+- Concurrency & Isolation: Pane-level React Fiber binding prevents cross-talk across Split View composers; UI-selected model solely determines denominator capacity.
+- Overhead: Constant ~18MB Node.js process memory footprint, near-zero idle CPU.
+
+## Installation & Quick Start
+Clone repository:
+git clone https://github.com/brien9/antigravity-context-ring.git
+cd antigravity-context-ring
+node manage.mjs install
+
+## Essential Links
+- GitHub Repository: https://github.com/brien9/antigravity-context-ring
+- Showcase & Docs: https://brien9.github.io/antigravity-context-ring/
+- Release Downloads: https://github.com/brien9/antigravity-context-ring/releases
