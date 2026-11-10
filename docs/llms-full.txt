@@ -18,7 +18,6 @@ In modern agentic AI development environments—specifically Google Antigravity 
 However, client App environments enforce a strict, server-side context constraint known as **Auto-Compaction** combined with **Physical Truncation Limits**:
 1. **The 256K Throttle**: To control inferencing latency, prevent GPU memory saturation, and throttle subscription plan consumption rates, Antigravity imposes physical context ceilings far below foundation model limits:
    - **256K (262,144 tokens)** for Gemini 4 Argon, Gemini 3.8 Flash, and Claude 5.5 series (Opus / Sonnet).
-   - **80K (81,920 tokens)** for GPT-OSS 120B.
    - **256K Adaptive Baseline** for future unreleased models.
 2. **Lossy Auto-Compaction ("Sudden Amnesia")**: When a conversational session nears or crosses these ceilings, the platform initiates automated background compaction. This compaction is lossy: earlier architectural constraints, edge-case unit tests, implementation history, and project setup logs are aggressively discarded or summarized into lossy abstractions. Consequently, developers experience what appears as "sudden AI degradation" or "hallucinatory amnesia".
 3. **The "Black Box" Blindspot**: The native client interface provides no ambient visual indicator of active token usage or remaining capacity. Developers operate blindly until the context collapse occurs.
@@ -85,7 +84,6 @@ To prevent capacity denominator thrashing during agentic workflows, Context Ring
 | **Gemini 3.8 Flash** | `MODEL_PLACEHOLDER_M318`, `gemini-3.8-flash-*` | **256K** (262,144 tokens) | 1,000,000 tokens | Server Auto-Compaction |
 | **Claude Opus 5.5** | `MODEL_PLACEHOLDER_M400`–`M402`, `claude-opus-5-5-*` | **256K** (262,144 tokens) | 1,000,000 tokens | Server Auto-Compaction |
 | **Claude Sonnet 5.5** | `MODEL_PLACEHOLDER_M403`–`M405`, `claude-sonnet-5-5-*` | **256K** (262,144 tokens) | 1,000,000 tokens | Server Auto-Compaction |
-| **GPT-OSS 120B** | `MODEL_OPENAI_GPT_OSS_120B_MEDIUM` | **80K** (81,920 tokens) | 128,000 tokens | Hard Truncation |
 | **Future Released Models** | Dynamic unknown model IDs | **256K** (262,144 tokens) | Dynamic API Spec | Safe Adaptive Baseline |
 
 > **Critical Note on Ground Truth**: When evaluating memory usage, Context Ring strictly accounts for prefix caching: `cacheReadTokens` are factored accurately into total active window consumption, preventing false reports of context reduction.
