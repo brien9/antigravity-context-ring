@@ -9,7 +9,7 @@ import http from 'node:http';
 
 const execFileAsync = promisify(execFile);
 const ROOT = process.cwd();
-const DIST_ZIP = join(ROOT, 'dist', 'antigravity-context-ring-v1.1.0.zip');
+const DIST_ZIP = join(ROOT, 'dist', 'antigravity-context-ring-v1.1.1.zip');
 const SANDBOX = join(ROOT, 'dist', 'clean_test_sandbox');
 const TEST_TARGET_DIR = join(SANDBOX, 'installed_plugin');
 const TEST_CONFIG_FILE = join(SANDBOX, 'test_config.json');

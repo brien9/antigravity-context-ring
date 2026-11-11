@@ -129,10 +129,19 @@ $jsonContent = $config | ConvertTo-Json -Depth 20
 # 4. 若 Antigravity 宿主正在运行，自动无感拉起与宿主共存亡的 Sidecar 守护进程（测试隔离模式跳过自动拉起）
 $antigravityProc = Get-Process antigravity -ErrorAction SilentlyContinue
 if ($antigravityProc -and -not $CustomTargetDir) {
-    Write-Host "[4/4] Antigravity host is running, starting Sidecar daemon..." -ForegroundColor Cyan
-    $mainScript = Join-Path $targetDir "sidecars\ring\main.mjs"
-    Start-Process -FilePath "node.exe" -ArgumentList @("`"$mainScript`"", "--sidecar=antigravity-context-ring") -WindowStyle Hidden
-    Write-Host "Sidecar daemon started and bound to Antigravity host!" -ForegroundColor Green
+    $existingSidecar = Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue | Where-Object {
+        $cmd = $_.CommandLine
+        if ([string]::IsNullOrWhiteSpace($cmd)) { return $false }
+        $cmd -match '(?:^|\s)--sidecar=antigravity-context-ring(?:\s|$)'
+    }
+    if (-not $existingSidecar) {
+        Write-Host "[4/4] Antigravity host is running, starting Sidecar daemon..." -ForegroundColor Cyan
+        $mainScript = Join-Path $targetDir "sidecars\ring\main.mjs"
+        Start-Process -FilePath "node.exe" -ArgumentList @("`"$mainScript`"", "--sidecar=antigravity-context-ring") -WindowStyle Hidden
+        Write-Host "Sidecar daemon started and bound to Antigravity host!" -ForegroundColor Green
+    } else {
+        Write-Host "[4/4] Sidecar daemon is already running and active." -ForegroundColor Green
+    }
 }
 
 Write-Host "------------------------------------------" -ForegroundColor Green

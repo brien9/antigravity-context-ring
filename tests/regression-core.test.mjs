@@ -1198,3 +1198,40 @@ test('【回归 16】PowerShell 配置更新必须兼容已存在的空插件对
   assert.match(installPs, /Add-Member -NotePropertyName 'enabled'/, '空插件对象必须通过 Add-Member 增加 enabled');
   assert.match(uninstallPs, /Add-Member -NotePropertyName 'enabled' -NotePropertyValue \$false/, '卸载脚本对空插件对象同样必须 Add-Member enabled=false');
 });
+
+test('【回归 17】mountOrUpdatePane 容器探测防越界: candidateContainer !== box 坚决防止误选外层 box', () => {
+  const widgetSource = readFileSync(new URL('../assets/ring-widget.cjs', import.meta.url), 'utf8');
+  assert.ok(
+    widgetSource.includes('candidateContainer !== box'),
+    'mountOrUpdatePane 向上探查 .flex-1 容器时必须包含 candidateContainer !== box 守卫，杜绝误把 box 当成工具栏容器'
+  );
+
+  // 模拟 DOM 结构验证：box 自身携带 flex-1
+  const box = { className: 'agent-input-box flex-1', isConnected: true };
+  const toolbar = { className: 'bottom-toolbar', parentElement: box };
+  const model = { className: 'model-trigger', parentElement: toolbar };
+
+  // 当向上搜索最近的 .flex-1 命中了 box 自身时：
+  toolbar.closest = (sel) => (sel === '.flex-1' ? box : null);
+  const candidateContainer = model.parentElement?.closest?.('.flex-1');
+  assert.equal(candidateContainer, box, '前置条件：向上探查命中 box 自身');
+
+  box.contains = (el) => el === box || el === toolbar || el === model;
+  const flexContainer = (candidateContainer && candidateContainer !== box && box?.contains(candidateContainer))
+    ? candidateContainer
+    : (model.parentElement || box);
+
+  assert.equal(flexContainer, toolbar, '添加 candidateContainer !== box 守卫后必须安全回退至 model.parentElement (toolbar)，绝不落入 box');
+});
+
+test('【回归 18】冷会话/过渡态 Fiber 预估离线稳态: RPC 失败时 fallback 链保留 inst.currentData 绝不退化为 0.15 灰环', () => {
+  const widgetSource = readFileSync(new URL('../assets/ring-widget.cjs', import.meta.url), 'utf8');
+  assert.ok(
+    widgetSource.includes('isCurrentDataValid ? inst.currentData : null'),
+    'syncPaneState 失败分支中 fallbackSnap 必须优先保留有效的 inst.currentData'
+  );
+  assert.ok(
+    widgetSource.includes('!inst.currentData.isPending') && widgetSource.includes('!inst.currentData.isDraft'),
+    '有效 inst.currentData 必须排除 pending 与 draft 态'
+  );
+});

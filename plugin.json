@@ -2,5 +2,5 @@
   "name": "antigravity-context-ring",
   "display_name": "Antigravity 上下文监控圆环",
   "description": "极简无侵入式 Antigravity 上下文占用圆环指示器与悬停监控",
-  "version": "1.1.0"
+  "version": "1.1.1"
 }

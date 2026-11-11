@@ -15,34 +15,9 @@ Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host "   Antigravity Context Ring Uninstaller   " -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
 
-# 0. 精准终止正在运行的 Sidecar 守护进程（严格白名单）
-Write-Host "[0/2] Terminating running Sidecar daemon..." -ForegroundColor Yellow
-try {
-    Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue | Where-Object { 
-        $cmd = $_.CommandLine
-        if ([string]::IsNullOrWhiteSpace($cmd)) { return $false }
-        if (-not [string]::IsNullOrWhiteSpace($CustomTargetDir)) {
-            $normCmd = $cmd.Replace('\', '/').ToLower()
-            $normTarget = $CustomTargetDir.Trim().Replace('\', '/').ToLower()
-            if ($normCmd.IndexOf($normTarget) -lt 0) { return $false }
-        } elseif ($cmd.Replace('\', '/').ToLower().IndexOf('clean_test_sandbox') -ge 0) {
-            return $false
-        }
-        $hasFlag = ($cmd -match '(?:^|\s)--sidecar=antigravity-context-ring(?:\s|$)')
-        $hasPath = ($cmd -match 'antigravity-context-ring' -and $cmd -match 'main\.mjs')
-        $hasRingMain = ($cmd -match 'sidecars[\\/]ring[\\/]main\.mjs' -or $cmd -match 'main\.mjs')
-        (($hasFlag -and $hasRingMain) -or $hasPath) -and ($_.ProcessId -ne $PID)
-    } | ForEach-Object {
-        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
-    }
-} catch {
-    # 受限或沙箱策略下可能无法访问 CIM，忽略并继续
-}
-Start-Sleep -Milliseconds 600
-
-# 1. 禁用配置
+# 1. 禁用配置 (必须在杀进程前执行，防止 Antigravity 宿主因 restart_policy: always 将 Sidecar 重新拉起锁定目录)
 if (Test-Path $configFile) {
-    Write-Host "[1/2] Updating plugin configuration to disabled..." -ForegroundColor Yellow
+    Write-Host "[1/3] Updating plugin configuration to disabled..." -ForegroundColor Yellow
     try {
         $raw = Get-Content $configFile -Raw -Encoding UTF8
         $config = $raw | ConvertFrom-Json
@@ -68,15 +43,44 @@ if (Test-Path $configFile) {
     }
 }
 
-# 2. 移除插件文件（带句柄释放重试）
-Write-Host "[2/2] Cleaning up plugin files..." -ForegroundColor Yellow
+# 2. 精准终止正在运行的 Sidecar 守护进程（严格白名单）
+Write-Host "[2/3] Terminating running Sidecar daemon..." -ForegroundColor Yellow
+function Stop-SidecarProcesses {
+    try {
+        Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue | Where-Object { 
+            $cmd = $_.CommandLine
+            if ([string]::IsNullOrWhiteSpace($cmd)) { return $false }
+            if (-not [string]::IsNullOrWhiteSpace($CustomTargetDir)) {
+                $normCmd = $cmd.Replace('\', '/').ToLower()
+                $normTarget = $CustomTargetDir.Trim().Replace('\', '/').ToLower()
+                if ($normCmd.IndexOf($normTarget) -lt 0) { return $false }
+            } elseif ($cmd.Replace('\', '/').ToLower().IndexOf('clean_test_sandbox') -ge 0) {
+                return $false
+            }
+            $hasFlag = ($cmd -match '(?:^|\s)--sidecar=antigravity-context-ring(?:\s|$)')
+            $hasPath = ($cmd -match 'antigravity-context-ring' -and $cmd -match 'main\.mjs')
+            $hasRingMain = ($cmd -match 'sidecars[\\/]ring[\\/]main\.mjs' -or $cmd -match 'main\.mjs')
+            (($hasFlag -and $hasRingMain) -or $hasPath) -and ($_.ProcessId -ne $PID)
+        } | ForEach-Object {
+            Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+    } catch {}
+}
+Stop-SidecarProcesses
+Start-Sleep -Milliseconds 600
+
+# 3. 移除插件文件（带句柄释放重试）
+Write-Host "[3/3] Cleaning up plugin files..." -ForegroundColor Yellow
 if (Test-Path $targetDir) {
     for ($i = 0; $i -lt 5; $i++) {
         try {
             Remove-Item -Recurse -Force $targetDir -ErrorAction Stop
-            break
+            if (-not (Test-Path $targetDir)) { break }
         } catch {
-            Start-Sleep -Milliseconds 500
+            if ($i -lt 4) {
+                Stop-SidecarProcesses
+                Start-Sleep -Milliseconds 500
+            }
         }
     }
 }

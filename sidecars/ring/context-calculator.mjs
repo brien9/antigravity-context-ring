@@ -133,8 +133,8 @@ export function processTrajectorySteps(steps = [], options = {}) {
       executionModel: '',
       checkpointModel: '',
       isEstimated: true,
-      compressionDetected: false,
-      compressionDrop: 0,
+      compressionDetected: Boolean(options.initialCompressionDetected),
+      compressionDrop: Number(options.initialCompressionDrop) || 0,
       isOverLimit: false,
       source: 'none',
       stepCount: 0,
@@ -172,8 +172,8 @@ export function processTrajectorySteps(steps = [], options = {}) {
   let lastCheckpointModel = '';
   let lastCheckpointStepIndex = -1;
 
-  let compressionDetected = false;
-  let compressionDrop = 0;
+  let compressionDetected = Boolean(options.initialCompressionDetected);
+  let compressionDrop = Number(options.initialCompressionDrop) || 0;
 
   let estimationDeltaSinceSnapshot = 0;
   let toolCallOutputsSinceSnapshot = 0;
@@ -419,8 +419,8 @@ export function processTrajectorySteps(steps = [], options = {}) {
     executionModel: executionModel || effectiveCapacityModel,
     checkpointModel: '',
     isEstimated: true,
-    compressionDetected: false,
-    compressionDrop: 0,
+    compressionDetected,
+    compressionDrop,
     isOverLimit: estimatedUsed >= contextLimit,
     source: 'estimated',
     stepCount,

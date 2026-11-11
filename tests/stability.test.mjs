@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { rmSync } from 'node:fs';
 import { RuntimeBridgeManager } from '../sidecars/ring/runtime-bridge.mjs';
 import { isContextRingProcess, startHostWatchdog, scanHostPids } from '../sidecars/ring/main.mjs';
 import { extractTokenAndPid, isCandidateServerLine } from '../sidecars/ring/ls-discovery.mjs';
@@ -261,6 +262,7 @@ test('【阶段四场景 8】真实 Windows 宿主环境: CIM 孤儿进程识别
   try { userAppProc.kill(); } catch {}
   try { imposterProc.kill(); } catch {}
   try { sidecarProc.kill(); } catch {}
+  try { rmSync('__agy_stability_cim_isolated_sandbox__', { recursive: true, force: true }); } catch {}
 
   assert.equal(sidecarAlive, false, '目标 Sidecar 进程必须被精准识别并终止！');
   assert.equal(userAlive, true, '用户无关 Node 进程绝不能被误杀！');

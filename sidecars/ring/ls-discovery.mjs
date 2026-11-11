@@ -1,23 +1,66 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync, statSync, lstatSync, rmSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
 import * as http from 'node:http';
 import * as https from 'node:https';
 
 const execFileAsync = promisify(execFile);
 
 let cachedLsInfo = null;
+let cachedAllLsList = null;
 let lastDiscoveryTime = 0;
 let inFlightDiscovery = null;
 let inFlightIsForce = false;
+let isDiskRestoredSingle = false;
 const CACHE_TTL_MS = 60_000;
-const DISK_CACHE_FILE = join(tmpdir(), 'antigravity-ls-cache.json');
+const NEGATIVE_CACHE_TTL_MS = 5_000;
 
-function readDiskCache() {
+function isCacheValid(now) {
+  if (!cachedAllLsList) return false;
+  const ttl = cachedAllLsList.length > 0 ? CACHE_TTL_MS : NEGATIVE_CACHE_TTL_MS;
+  return (now - lastDiscoveryTime < ttl);
+}
+
+/**
+ * 获取跨进程持久化缓存文件路径
+ * 优先级：测试隔离沙箱 > Windows 用户 AppData > POSIX XDG_RUNTIME_DIR (0700私有目录) > ~/.gemini 目录 > 带 UID 隔离的 Temp 目录
+ */
+export function getDiskCacheFile() {
+  if (process.env.AGY_TEST_TARGET_DIR) {
+    return join(process.env.AGY_TEST_TARGET_DIR, 'antigravity-ls-cache.json');
+  }
+  if (process.platform === 'win32') {
+    const base = process.env.LOCALAPPDATA || process.env.APPDATA || tmpdir();
+    return join(base, 'antigravity-ls-cache.json');
+  }
+  if (process.env.XDG_RUNTIME_DIR) {
+    return join(process.env.XDG_RUNTIME_DIR, 'antigravity-ls-cache.json');
+  }
+  const home = homedir();
+  if (home) {
+    return join(home, '.gemini', 'antigravity-ls-cache.json');
+  }
+  const uid = typeof process.getuid === 'function' ? process.getuid() : 'default';
+  return join(tmpdir(), `antigravity-user-${uid}`, 'antigravity-ls-cache.json');
+}
+
+export const DISK_CACHE_FILE = getDiskCacheFile();
+
+export function readDiskCache() {
   try {
-    const raw = readFileSync(DISK_CACHE_FILE, 'utf8');
+    const targetFile = getDiskCacheFile();
+    try {
+      const stat = lstatSync(targetFile);
+      if (stat.isSymbolicLink()) {
+        rmSync(targetFile, { force: true });
+        return null;
+      }
+    } catch {
+      return null;
+    }
+    const raw = readFileSync(targetFile, 'utf8');
     const data = JSON.parse(raw);
     if (
       data &&
@@ -34,9 +77,47 @@ function readDiskCache() {
   return null;
 }
 
-function writeDiskCache(info) {
+export function writeDiskCache(info) {
+  if (
+    !info ||
+    !Number.isInteger(info.port) ||
+    info.port <= 0 ||
+    info.port > 65535 ||
+    typeof info.csrfToken !== 'string' ||
+    !info.csrfToken ||
+    typeof info.useTls !== 'boolean'
+  ) {
+    return;
+  }
   try {
-    writeFileSync(DISK_CACHE_FILE, JSON.stringify(info), 'utf8');
+    const targetFile = getDiskCacheFile();
+    const targetDir = dirname(targetFile);
+    if (!existsSync(targetDir)) {
+      mkdirSync(targetDir, { recursive: true, mode: 0o700 });
+    } else {
+      if (typeof process.getuid === 'function') {
+        try {
+          const dirStat = statSync(targetDir);
+          if (dirStat.uid !== process.getuid()) {
+            return;
+          }
+        } catch {}
+      }
+      try {
+        chmodSync(targetDir, 0o700);
+      } catch {}
+    }
+    try {
+      const stat = lstatSync(targetFile);
+      if (stat.isSymbolicLink()) {
+        rmSync(targetFile, { force: true });
+      }
+    } catch {}
+    // 权限显式设为 0600 (仅当前所有者可读写)，杜绝多用户主机或共享环境下的 CSRF Token 越权读取
+    writeFileSync(targetFile, JSON.stringify(info), { mode: 0o600, encoding: 'utf8' });
+    try {
+      chmodSync(targetFile, 0o600);
+    } catch {}
   } catch {}
 }
 
@@ -54,7 +135,8 @@ export function extractTokenAndPid(line) {
   if (tokenMatch) {
     return {
       pid,
-      csrfToken: tokenMatch[1]
+      csrfToken: tokenMatch[1],
+      commandLine: line
     };
   }
   return null;
@@ -66,7 +148,66 @@ export function isCandidateServerLine(line) {
   return lower.includes('language_server') ||
          lower.includes('agy') ||
          lower.includes('--hub') ||
-         lower.includes('csrf');
+         lower.includes('csrf') ||
+         lower.includes('subclient_type') ||
+         lower.includes('override_ide_name');
+}
+
+/**
+ * 计算语言服务器候选进程的优先级评分
+ * 官方 Hub 特征置顶：--subclient_type hub / --override_ide_name antigravity
+ */
+export function getCandidatePriorityScore(lineOrCand) {
+  const line = typeof lineOrCand === 'string' ? lineOrCand : (lineOrCand?.commandLine || lineOrCand?.cmd || '');
+  if (!line) return 0;
+  let score = 0;
+  // 官方 Hub 特征 1: --subclient_type hub (兼容等号、空格以及单双引号、转义引号包裹)
+  if (/(?:^|\s|--|-)(?:subclient_type)(?:=|\s+|:)+[\\"']*hub[\\"']*(?:\s|$|[\\"'])/i.test(line) ||
+      line.toLowerCase().includes('subclient_type=hub') || line.toLowerCase().includes('subclient_type hub')) {
+    score += 100;
+  }
+  // 官方 Hub 特征 2: --override_ide_name antigravity (兼容等号、空格以及单双引号、转义引号包裹)
+  if (/(?:^|\s|--|-)(?:override_ide_name)(?:=|\s+|:)+[\\"']*antigravity[\\"']*(?:\s|$|[\\"'])/i.test(line) ||
+      line.toLowerCase().includes('override_ide_name=antigravity') || line.toLowerCase().includes('override_ide_name antigravity')) {
+    score += 100;
+  }
+  // 辅助 Hub 标识: --hub
+  if (/(?:^|\s)(?:--|-)hub(?:\s|=|$)/i.test(line)) {
+    score += 50;
+  }
+  return score;
+}
+
+/**
+ * 候选进程加权排序：官方 Hub 特征置顶，进程创建时间（Windows CreationDate 最新，POSIX PID 倒序）排在最前
+ */
+export function sortCandidates(candidates, platform = process.platform) {
+  if (!Array.isArray(candidates)) return [];
+  const valid = candidates.filter(c => c && typeof c === 'object');
+  return valid.sort((a, b) => {
+    const scoreA = getCandidatePriorityScore(a);
+    const scoreB = getCandidatePriorityScore(b);
+    if (scoreA !== scoreB) {
+      return scoreB - scoreA; // 优先级加权高者置顶
+    }
+    if (a?.creationDate || b?.creationDate) {
+      const timeA = a?.creationDate ? new Date(a.creationDate).getTime() : NaN;
+      const timeB = b?.creationDate ? new Date(b.creationDate).getTime() : NaN;
+      if (!isNaN(timeA) && !isNaN(timeB) && timeA !== timeB) {
+        return timeB - timeA;
+      }
+      if (!isNaN(timeA) && isNaN(timeB)) return -1;
+      if (isNaN(timeA) && !isNaN(timeB)) return 1;
+    }
+    if (platform === 'win32') {
+      if (a?.orderIndex !== undefined && b?.orderIndex !== undefined && a.orderIndex !== b.orderIndex) {
+        return a.orderIndex - b.orderIndex; // PowerShell Sort-Object CreationDate -Descending，序号小者代表最新
+      }
+      return (b?.pid || 0) - (a?.pid || 0);
+    } else {
+      return (b?.pid || 0) - (a?.pid || 0);
+    }
+  });
 }
 
 /**
@@ -248,17 +389,17 @@ function findWorkingPort(ports, csrfToken, timeoutMs = 1500) {
 }
 
 /**
- * 发现当前运行中的 Antigravity 语言服务器（含并发请求合并防重入锁）
+ * 发现当前运行中的所有存活且响应正常的 Antigravity 语言服务器（按优先级排序，首选排在第 0 位）
  * @param {boolean} [forceRefresh=false]
- * @returns {Promise<Object|null>}
+ * @returns {Promise<Array<Object>>}
  */
-export async function discoverLanguageServer(forceRefresh = false) {
+export async function discoverAllLanguageServers(forceRefresh = false) {
   const now = Date.now();
-  if (!forceRefresh && cachedLsInfo && (now - lastDiscoveryTime < CACHE_TTL_MS)) {
-    return cachedLsInfo;
+  if (!forceRefresh && !isDiskRestoredSingle && isCacheValid(now)) {
+    return cachedAllLsList;
   }
 
-  // 并发合并：若已有发现任务在途且满足刷新级别，直接复用同一 Promise，避免并发拉起多个 PowerShell 进程
+  // 并发合并：若已有发现任务在途且满足刷新级别，直接复用同一 Promise
   if (inFlightDiscovery && (!forceRefresh || inFlightIsForce)) {
     return inFlightDiscovery;
   }
@@ -274,44 +415,73 @@ export async function discoverLanguageServer(forceRefresh = false) {
   return runPromise;
 }
 
-async function _performDiscovery(forceRefresh = false) {
+/**
+ * 发现当前运行中的首选 Antigravity 语言服务器（含并发请求合并防重入锁，保持调用方 100% 兼容）
+ * @param {boolean} [forceRefresh=false]
+ * @returns {Promise<Object|null>}
+ */
+export async function discoverLanguageServer(forceRefresh = false) {
   const now = Date.now();
-  if (!forceRefresh) {
-    if (cachedLsInfo && (now - lastDiscoveryTime < CACHE_TTL_MS)) {
-      return cachedLsInfo;
-    }
+  if (!forceRefresh && cachedLsInfo && (now - lastDiscoveryTime < CACHE_TTL_MS)) {
+    return cachedLsInfo;
+  }
+  if (!forceRefresh && cachedAllLsList && cachedAllLsList.length === 0 && (now - lastDiscoveryTime < NEGATIVE_CACHE_TTL_MS)) {
+    return null;
+  }
 
-    // 磁盘级跨进程持久化缓存探活
+  // 磁盘级跨进程持久化缓存探活（仅在非强制刷新且无内存首选时作为秒开捷径）
+  if (!forceRefresh) {
     const diskCache = readDiskCache();
     if (diskCache) {
       const alive = await probePort(diskCache.port, diskCache.csrfToken, diskCache.useTls, 250);
       if (alive) {
         cachedLsInfo = diskCache;
+        cachedAllLsList = [diskCache];
         lastDiscoveryTime = Date.now();
+        isDiskRestoredSingle = true;
         return cachedLsInfo;
       }
     }
-  } else {
+  }
+
+  const all = await discoverAllLanguageServers(forceRefresh);
+  return (Array.isArray(all) && all.length > 0) ? all[0] : null;
+}
+
+async function _performDiscovery(forceRefresh = false) {
+  const now = Date.now();
+  if (!forceRefresh && !isDiskRestoredSingle && isCacheValid(now)) {
+    return cachedAllLsList;
+  }
+
+  if (forceRefresh) {
     cachedLsInfo = null;
+    cachedAllLsList = null;
+    isDiskRestoredSingle = false;
   }
 
   try {
+    const workingServers = [];
     if (process.platform === 'win32') {
       const candidates = [];
       const seenPids = new Set();
       const collectCandidates = (lineList) => {
-        for (const line of lineList) {
+        for (let idx = 0; idx < lineList.length; idx++) {
+          const line = lineList[idx];
           if (isCandidateServerLine(line)) {
             const info = extractTokenAndPid(line);
             if (info && !seenPids.has(info.pid)) {
               seenPids.add(info.pid);
-              candidates.push(info);
+              candidates.push({
+                ...info,
+                orderIndex: idx
+              });
             }
           }
         }
       };
 
-      const psScript = 'Get-CimInstance Win32_Process -Filter "Name like \'language_server%\' or Name = \'agy.exe\' or Name = \'agy\'" | Select-Object ProcessId, CommandLine | ConvertTo-Csv -NoTypeInformation';
+      const psScript = 'Get-CimInstance Win32_Process -Filter "Name like \'language_server%\' or Name = \'agy.exe\' or Name = \'agy\'" | Sort-Object CreationDate -Descending | Select-Object ProcessId, CommandLine | ConvertTo-Csv -NoTypeInformation';
       const { stdout } = await execFileAsync('powershell', ['-NoProfile', '-NoLogo', '-Command', psScript], {
         encoding: 'utf8',
         timeout: 10000
@@ -322,7 +492,7 @@ async function _performDiscovery(forceRefresh = false) {
 
       if (candidates.length === 0) {
         try {
-          const fallbackPsScript = 'Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*--hub*" -or $_.CommandLine -like "*--csrf*" } | Select-Object ProcessId, CommandLine | ConvertTo-Csv -NoTypeInformation';
+          const fallbackPsScript = 'Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*--hub*" -or $_.CommandLine -like "*--csrf*" -or $_.CommandLine -like "*--subclient_type*" -or $_.CommandLine -like "*--override_ide_name*" } | Sort-Object CreationDate -Descending | Select-Object ProcessId, CommandLine | ConvertTo-Csv -NoTypeInformation';
           const { stdout: fallbackStdout } = await execFileAsync('powershell', ['-NoProfile', '-NoLogo', '-Command', fallbackPsScript], {
             encoding: 'utf8',
             timeout: 5000
@@ -332,44 +502,94 @@ async function _performDiscovery(forceRefresh = false) {
         } catch {}
       }
 
+      const sorted = sortCandidates(candidates, 'win32');
+      candidates.splice(0, candidates.length, ...sorted);
+
       for (const cand of candidates) {
         const ports = await getWindowsListeningPorts(cand.pid);
         const working = await findWorkingPort(ports, cand.csrfToken);
         if (working) {
-          cachedLsInfo = { pid: cand.pid, port: working.port, csrfToken: cand.csrfToken, useTls: working.useTls };
-          lastDiscoveryTime = Date.now();
-          writeDiskCache(cachedLsInfo);
-          return cachedLsInfo;
+          workingServers.push({
+            pid: cand.pid,
+            port: working.port,
+            csrfToken: cand.csrfToken,
+            useTls: working.useTls
+          });
         }
       }
     } else {
       const candidates = [];
       const seenPids = new Set();
       const { stdout } = await execFileAsync('ps', ['-ax', '-o', 'pid=,command='], { encoding: 'utf8', timeout: 5000 });
-      for (const line of stdout.split('\n')) {
+      const lines = stdout.split('\n').map(l => l.trim()).filter(Boolean);
+      for (let idx = 0; idx < lines.length; idx++) {
+        const line = lines[idx];
         if (isCandidateServerLine(line)) {
           const info = extractTokenAndPid(line);
           if (info && !seenPids.has(info.pid)) {
             seenPids.add(info.pid);
-            candidates.push(info);
+            candidates.push({
+              ...info,
+              orderIndex: idx
+            });
           }
         }
       }
+
+      const sorted = sortCandidates(candidates, process.platform);
+      candidates.splice(0, candidates.length, ...sorted);
 
       for (const cand of candidates) {
         const ports = await getUnixListeningPorts(cand.pid);
         const working = await findWorkingPort(ports, cand.csrfToken);
         if (working) {
-          cachedLsInfo = { pid: cand.pid, port: working.port, csrfToken: cand.csrfToken, useTls: working.useTls };
-          lastDiscoveryTime = Date.now();
-          writeDiskCache(cachedLsInfo);
-          return cachedLsInfo;
+          workingServers.push({
+            pid: cand.pid,
+            port: working.port,
+            csrfToken: cand.csrfToken,
+            useTls: working.useTls
+          });
         }
       }
+    }
+
+    if (workingServers.length > 0) {
+      cachedAllLsList = workingServers;
+      cachedLsInfo = workingServers[0];
+      lastDiscoveryTime = Date.now();
+      isDiskRestoredSingle = false;
+      writeDiskCache(cachedLsInfo);
+      return workingServers;
     }
   } catch (err) {
     // 发现阶段静默容错
   }
 
-  return null;
+  cachedAllLsList = [];
+  cachedLsInfo = null;
+  lastDiscoveryTime = Date.now();
+  isDiskRestoredSingle = false;
+  return [];
+}
+
+export function clearCachedLanguageServer() {
+  cachedLsInfo = null;
+  cachedAllLsList = null;
+  lastDiscoveryTime = 0;
+  isDiskRestoredSingle = false;
+}
+
+/**
+ * 诊断辅助接口（供测试状态验证与重置）
+ */
+export function _getLsDiscoveryCacheInfo() {
+  return {
+    cachedLsInfo,
+    cachedAllLsList: cachedAllLsList ? [...cachedAllLsList] : null,
+    lastDiscoveryTime,
+    isDiskRestoredSingle,
+    clear: () => {
+      clearCachedLanguageServer();
+    }
+  };
 }

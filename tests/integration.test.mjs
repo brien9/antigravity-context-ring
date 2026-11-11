@@ -737,7 +737,7 @@ test('【阶段三集成测试 4-B】6000 步超长会话：读取最新尾部�
   });
 
   assert.equal(summaryCalls, 1, '仅在确认超过 5000 步后才查询一次权威总步数');
-  assert.equal(dataCalls, 7, '5 页前缀 + 1 次边界探针 + 1 页尾部补齐');
+  assert.equal(dataCalls, 6, '5 页前缀 + 1 次边界探针（已含 5000~6000 步，彻底杜绝第 5000 步附近重复补齐）');
   assert.equal(view.stepCount, 5000, '只保留并分析最新 5000 步窗口');
   assert.equal(view.totalSteps, 6000);
   assert.equal(view.isWindowed, true);

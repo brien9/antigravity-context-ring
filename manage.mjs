@@ -95,24 +95,29 @@ async function install() {
 
   const hostPids = await scanHostPids().catch(() => new Set());
   if (hostPids.size > 0 && !process.env.AGY_TEST_TARGET_DIR) {
-    console.log('[4/4] 检测到 Antigravity 正在运行，正在后台拉起 Sidecar 守护进程...');
-    const mainScript = join(TARGET_DIR, 'sidecars', 'ring', 'main.mjs');
-    let startedViaWmi = false;
-    if (process.platform === 'win32') {
-      try {
-        const wmiCmdLine = `"${process.execPath}" "${mainScript}" --sidecar=antigravity-context-ring`;
-        const psSpawn = `$si = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[uint16]0}; $res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine='${wmiCmdLine.replace(/'/g, "''")}'; ProcessStartupInformation=$si}; if ($res.ReturnValue -ne 0) { throw 'WMI create failed' }`;
-        await execFileAsync('powershell', ['-NoProfile', '-NonInteractive', '-Command', psSpawn]);
-        startedViaWmi = true;
-      } catch {}
-    }
-    if (!startedViaWmi) {
-      const child = spawn(process.execPath, [mainScript, '--sidecar=antigravity-context-ring'], {
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: true
-      });
-      child.unref();
+    const existingPids = await findRunningSidecarPids();
+    if (existingPids.length === 0) {
+      console.log('[4/4] 检测到 Antigravity 正在运行，正在后台拉起 Sidecar 守护进程...');
+      const mainScript = join(TARGET_DIR, 'sidecars', 'ring', 'main.mjs');
+      let startedViaWmi = false;
+      if (process.platform === 'win32') {
+        try {
+          const wmiCmdLine = `"${process.execPath}" "${mainScript}" --sidecar=antigravity-context-ring`;
+          const psSpawn = `$si = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[uint16]0}; $res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine='${wmiCmdLine.replace(/'/g, "''")}'; ProcessStartupInformation=$si}; if ($res.ReturnValue -ne 0) { throw 'WMI create failed' }`;
+          await execFileAsync('powershell', ['-NoProfile', '-NonInteractive', '-Command', psSpawn]);
+          startedViaWmi = true;
+        } catch {}
+      }
+      if (!startedViaWmi) {
+        const child = spawn(process.execPath, [mainScript, '--sidecar=antigravity-context-ring'], {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true
+        });
+        child.unref();
+      }
+    } else {
+      console.log(`[4/4] 检测到 Sidecar 守护进程已在运行中 (PID: ${existingPids.join(', ')})，无需重复启动。`);
     }
   }
 
@@ -121,30 +126,34 @@ async function install() {
 }
 
 async function uninstall() {
-  console.log('[0/2] 正在安全终止运行中的 Sidecar 进程...');
-  await cleanOrphanInstances().catch(() => {});
-
-  console.log('[1/2] 正在禁用插件配置...');
+  console.log('[0/3] 正在禁用插件配置...');
   if (existsSync(CONFIG_FILE)) {
     try {
       const config = await readJsonForWrite(CONFIG_FILE);
-      if (config.plugins && config.plugins[PLUGIN_KEY]) {
-        config.plugins[PLUGIN_KEY].enabled = false;
-        await writeJson(CONFIG_FILE, config);
-      }
+      if (!config.plugins) config.plugins = {};
+      if (!config.plugins[PLUGIN_KEY]) config.plugins[PLUGIN_KEY] = {};
+      config.plugins[PLUGIN_KEY].enabled = false;
+      await writeJson(CONFIG_FILE, config);
     } catch (err) {
       console.warn(`[WARN] 配置文件无法安全解析，已跳过配置更新且未覆盖原文件: ${err.message}`);
     }
   }
+
+  console.log('[1/3] 正在安全终止运行中的 Sidecar 进程...');
+  // 必须在禁用配置之后终止进程，防止 Antigravity 宿主因 restart_policy: always 自动将 Sidecar 重新拉起锁定目录
+  await cleanOrphanInstances().catch(() => {});
   await new Promise(r => setTimeout(r, 600));
 
-  console.log('[2/2] 正在清理插件文件...');
+  console.log('[2/3] 正在清理插件文件...');
   if (existsSync(TARGET_DIR)) {
     for (let i = 0; i < 5; i++) {
       try {
         await rm(TARGET_DIR, { recursive: true, force: true });
-        break;
-      } catch {
+        if (!existsSync(TARGET_DIR)) break;
+      } catch {}
+      if (i < 4) {
+        // 若 Windows 仍有文件句柄锁，再次深度清理并退避等待
+        await cleanOrphanInstances().catch(() => {});
         await new Promise(r => setTimeout(r, 500));
       }
     }
@@ -234,7 +243,7 @@ async function ensurePs1Utf8Bom(filePath) {
 async function packageZip() {
   const distDir = join(SOURCE, 'dist');
   await mkdir(distDir, { recursive: true });
-  const pluginInfo = await readJson(join(SOURCE, 'plugin.json'), { version: '1.1.0' });
+  const pluginInfo = await readJson(join(SOURCE, 'plugin.json'), { version: '1.1.1' });
   const zipPath = join(distDir, `antigravity-context-ring-v${pluginInfo.version}.zip`);
 
   if (existsSync(zipPath)) {
@@ -285,6 +294,20 @@ if (action === 'install') {
   status();
 } else if (action === 'package') {
   packageZip();
-} else {
+} else if (process.argv[1] && (process.argv[1].endsWith('manage.mjs') || process.argv[1].endsWith('manage'))) {
   console.log('用法: node manage.mjs [install | uninstall | status | package]');
 }
+
+export {
+  install,
+  uninstall,
+  status,
+  packageZip,
+  normalizeConfigForWrite,
+  readJsonForWrite,
+  writeJson,
+  findRunningSidecarPids,
+  TARGET_DIR,
+  CONFIG_FILE,
+  PLUGIN_KEY
+};

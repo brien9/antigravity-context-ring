@@ -758,7 +758,8 @@ function installAgContextRingWidget() {
               percent: Math.round(estRatio * 1000) / 10 + '%',
               tooltip: `约 ${(estTokens / 1000).toFixed(1)}K / ${limitK} 上下文 (正在校准...)`,
               isEstimated: true,
-              source: 'fiber-estimate'
+              source: 'fiber-estimate',
+              conversationId: cid.toLowerCase()
             };
           }
         }
@@ -1012,7 +1013,14 @@ function installAgContextRingWidget() {
         updatePaneView(inst, getCachedSnapshot(cid) || data);
       } else {
         inst.consecutiveFailures++;
-        const fallbackSnap = getCachedSnapshot(cid) || getFiberQuickEstimate(inst.box, cid, inst.model);
+        const isCurrentDataValid = inst.currentData &&
+          inst.currentData.ready &&
+          !inst.currentData.isPending &&
+          !inst.currentData.isDraft &&
+          (!inst.currentData.conversationId || inst.currentData.conversationId.toLowerCase() === cid.toLowerCase());
+        const fallbackSnap = getCachedSnapshot(cid) ||
+          (isCurrentDataValid ? inst.currentData : null) ||
+          getFiberQuickEstimate(inst.box, cid, inst.model);
         if (fallbackSnap) {
           if (!inst.currentData || !inst.currentData.ready || inst.currentData.isPending || inst.currentData.isDraft) {
             updatePaneView(inst, fallbackSnap);
@@ -1081,10 +1089,17 @@ function installAgContextRingWidget() {
   }
 
   function mountOrUpdatePane(comp, totalPanes) {
-    const { box, editor, model } = comp;
-    const flexContainer = model.closest('.flex-1') || model.parentElement;
+    if (!comp || !comp.box || !comp.model) return null;
+    try {
+      const { box, editor, model } = comp;
+      // 容器探测防越界：若 model 自身带 flex-1，closest('.flex-1') 会匹配到自身；必须从 parentElement 开始向上找且限制在 box 内部，杜绝误匹配最外层 box 容器
+      const candidateContainer = model.parentElement?.closest?.('.flex-1');
+      const flexContainer = (candidateContainer && candidateContainer !== box && box?.contains(candidateContainer))
+        ? candidateContainer
+        : (model.parentElement || box);
+
     let modelBranch = model;
-    while (modelBranch && modelBranch.parentElement !== flexContainer && modelBranch.parentElement !== document.body) {
+    while (modelBranch && modelBranch.parentElement && modelBranch.parentElement !== flexContainer && modelBranch.parentElement !== box && modelBranch.parentElement !== (typeof document !== 'undefined' ? document.body : null)) {
       modelBranch = modelBranch.parentElement;
     }
 
@@ -1097,7 +1112,7 @@ function installAgContextRingWidget() {
       modelHintChanged = currentModelHint !== inst.lastModelHint;
       inst.lastModelHint = currentModelHint;
       // 短路守卫：若该分屏圆环节点已挂载且紧邻模型选择器右侧，仅确保监听存活，跳过 DOM 重建
-      if (inst.node && inst.node.isConnected && flexContainer?.contains(inst.node) && inst.node.previousElementSibling === modelBranch) {
+      if (inst.node && inst.node.isConnected && (flexContainer?.contains(inst.node) || box?.contains(inst.node)) && (inst.node.previousElementSibling === modelBranch || inst.node.previousElementSibling === model)) {
         bindPaneAgentStateListener(inst);
         if (modelHintChanged) {
           syncPaneState(inst);
@@ -1306,14 +1321,21 @@ function installAgContextRingWidget() {
       }
     }
 
-    if (flexContainer && modelBranch) {
-      flexContainer.insertBefore(node, modelBranch.nextSibling);
-    }
+    try {
+      if (flexContainer && modelBranch && modelBranch.parentElement === flexContainer) {
+        flexContainer.insertBefore(node, modelBranch.nextSibling);
+      } else if (model.parentElement) {
+        model.parentElement.insertBefore(node, model.nextSibling);
+      }
+    } catch {}
 
     // 新挂载或重挂载分屏立即触发一次普通后台校准；历史分母由真实轨迹驱动，草稿直接本地重算
     syncPaneState(inst);
     return inst;
+  } catch {
+    return null;
   }
+}
 
   function mount() {
     const composers = findAllComposers();
@@ -1326,9 +1348,11 @@ function installAgContextRingWidget() {
       }
     }
 
-    // 2. 为所有可见分屏对等挂载或更新圆环实例
+    // 2. 为所有可见分屏对等挂载或更新圆环实例（带单个分屏挂载异常隔离防御）
     for (const comp of composers) {
-      mountOrUpdatePane(comp, composers.length);
+      try {
+        mountOrUpdatePane(comp, composers.length);
+      } catch {}
     }
 
     // 3. 清理不属于任何活跃分屏实例的残留孤儿节点

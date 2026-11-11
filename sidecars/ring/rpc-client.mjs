@@ -38,7 +38,7 @@ export function isRetryableRpcError(err) {
 export function rpcCall(ls, endpoint, body = {}, timeoutMs = 10000, signal = null) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
-      reject(new Error('RPC aborted'));
+      reject(createRpcError('RPC aborted', { retryable: false, code: 'ECANCELED' }));
       return;
     }
 
@@ -122,7 +122,7 @@ export function rpcCall(ls, endpoint, body = {}, timeoutMs = 10000, signal = nul
     if (signal) {
       onAbort = () => {
         req.destroy();
-        safeReject(new Error('RPC aborted'));
+        safeReject(createRpcError('RPC aborted', { retryable: false, code: 'ECANCELED' }));
       };
       signal.addEventListener('abort', onAbort, { once: true });
     }

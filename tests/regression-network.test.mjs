@@ -1,8 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { rpcCall, isRetryableRpcError } from '../sidecars/ring/rpc-client.mjs';
-import { probePort } from '../sidecars/ring/ls-discovery.mjs';
+import { probePort, getDiskCacheFile, writeDiskCache, readDiskCache } from '../sidecars/ring/ls-discovery.mjs';
 import { rpcCallWithRetry } from '../sidecars/ring/context-service.mjs';
 
 /**
@@ -134,3 +140,271 @@ test('【网络健壮性 7】rpcCallWithRetry: 重新发现失败时抛出原始
   }).catch(e => e);
   assert.equal(err, original);
 });
+
+test('【稳健性修复 5】ls-discovery: getDiskCacheFile 具备沙箱与私有权限路径隔离，杜绝全局 /tmp 明文泄露', () => {
+  const originalTestDir = process.env.AGY_TEST_TARGET_DIR;
+  try {
+    process.env.AGY_TEST_TARGET_DIR = join(tmpdir(), 'agy_safe_test_cache');
+    const path = getDiskCacheFile();
+    assert.ok(path.includes('agy_safe_test_cache'), '在测试环境下必须优先使用 AGY_TEST_TARGET_DIR 隔离');
+  } finally {
+    if (originalTestDir !== undefined) {
+      process.env.AGY_TEST_TARGET_DIR = originalTestDir;
+    } else {
+      delete process.env.AGY_TEST_TARGET_DIR;
+    }
+  }
+
+  // 验证源码写入时严格指定 mode: 0o600
+  const lsDiscoveryCode = readFileSync(new URL('../sidecars/ring/ls-discovery.mjs', import.meta.url), 'utf8');
+  assert.ok(lsDiscoveryCode.includes('mode: 0o600'), 'writeDiskCache 写入时必须显式指定 0600 权限');
+});
+
+test('【稳健性修复 6】manage.mjs & uninstall.ps1: 卸载时序防御，必须先禁用配置再终止进程', () => {
+  const manageCode = readFileSync(new URL('../manage.mjs', import.meta.url), 'utf8');
+  const uninstallFunc = manageCode.slice(manageCode.indexOf('async function uninstall('), manageCode.indexOf('async function findRunningSidecarPids('));
+  const disableConfigPos = uninstallFunc.indexOf('config.plugins[PLUGIN_KEY].enabled = false;');
+  const killSidecarPos = uninstallFunc.indexOf('await cleanOrphanInstances().catch');
+  assert.ok(disableConfigPos !== -1 && killSidecarPos !== -1, 'uninstall 必须包含禁用配置与杀死进程两步');
+  assert.ok(disableConfigPos < killSidecarPos, '必须在杀进程之前先禁用配置，防止宿主按 restart_policy 重新拉起进程');
+
+  const psCode = readFileSync(new URL('../uninstall.ps1', import.meta.url), 'utf8');
+  const psDisablePos = psCode.indexOf('$pluginNode.enabled = $false');
+  const psKillPos = psCode.indexOf('Stop-SidecarProcesses');
+  assert.ok(psDisablePos !== -1 && psKillPos !== -1);
+  assert.ok(psDisablePos < psKillPos, 'uninstall.ps1 中必须先禁用配置，再调用 Stop-SidecarProcesses');
+});
+
+test('【稳健性修复 7】ring-widget: model 自身带 flex-1 时不会误判为父容器，且 mount() 隔离异常', () => {
+  const widgetCode = readFileSync(new URL('../assets/ring-widget.cjs', import.meta.url), 'utf8');
+  assert.ok(
+    widgetCode.includes("model.parentElement?.closest?.('.flex-1')"),
+    'flexContainer 必须从 model.parentElement 向上探查，杜绝 model 自身带 flex-1 时将自身当成容器'
+  );
+  assert.ok(
+    widgetCode.includes('try {\n        mountOrUpdatePane(comp, composers.length);\n      } catch {}') ||
+    widgetCode.includes('try {\r\n        mountOrUpdatePane(comp, composers.length);\r\n      } catch {}'),
+    'mount() 遍历挂载必须对单分屏包裹 try/catch，防止单个分屏 DOM 异常中断全局'
+  );
+});
+
+test('【稳健性修复 5-B】ls-discovery: writeDiskCache 递归创建父目录、数据结构校验与安全权限实测', () => {
+  const originalTestDir = process.env.AGY_TEST_TARGET_DIR;
+  const sandboxParent = join(tmpdir(), 'agy_cache_deep_' + Date.now());
+  const sandboxDir = join(sandboxParent, 'deep_nested_dir');
+  try {
+    process.env.AGY_TEST_TARGET_DIR = sandboxDir;
+    // 1. 父目录完全不存在时，writeDiskCache 自动创建目录并安全写入
+    assert.equal(existsSync(sandboxDir), false);
+    const mockInfo = { port: 37421, csrfToken: 'sec_token_999999999999999999999999', useTls: false };
+    writeDiskCache(mockInfo);
+    assert.equal(existsSync(sandboxDir), true, '父目录必须被自动递归创建');
+
+    // 2. readDiskCache 能够精准读回数据
+    const loaded = readDiskCache();
+    assert.deepEqual(loaded, mockInfo, '写入的凭据信息必须完整正确读回');
+
+    // 3. 校验权限（在非 Windows 系统上，mode 必须受限于 0600）
+    if (process.platform !== 'win32') {
+      const targetFile = getDiskCacheFile();
+      const st = statSync(targetFile);
+      assert.equal(st.mode & 0o777, 0o600, '磁盘缓存文件权限必须是 0600');
+    }
+
+    // 4. 非法数据自愈防御（如端口非法或缺少 token，返回 null）
+    const targetFile = getDiskCacheFile();
+    writeFileSync(targetFile, JSON.stringify({ port: -1, csrfToken: 'valid', useTls: false }), 'utf8');
+    assert.equal(readDiskCache(), null, '非法端口必须被校验拦截');
+
+    writeFileSync(targetFile, JSON.stringify({ port: 1234, csrfToken: '', useTls: false }), 'utf8');
+    assert.equal(readDiskCache(), null, '空 token 必须被校验拦截');
+
+    writeFileSync(targetFile, '{ invalid json', 'utf8');
+    assert.equal(readDiskCache(), null, '损坏 JSON 必须被安全捕获返回 null');
+
+    // 5. writeDiskCache 输入校验防御：传入非法对象时绝不覆写磁盘存量有效缓存
+    writeDiskCache(mockInfo);
+    assert.deepEqual(readDiskCache(), mockInfo);
+    writeDiskCache(null);
+    assert.deepEqual(readDiskCache(), mockInfo, 'writeDiskCache(null) 绝不能破坏有效缓存');
+    writeDiskCache({ port: -99, csrfToken: 'fake', useTls: false });
+    assert.deepEqual(readDiskCache(), mockInfo, 'writeDiskCache 非法端口绝不能破坏有效缓存');
+    writeDiskCache({ port: 1234, csrfToken: '', useTls: false });
+    assert.deepEqual(readDiskCache(), mockInfo, 'writeDiskCache 空 token 绝不能破坏有效缓存');
+  } finally {
+    if (originalTestDir !== undefined) {
+      process.env.AGY_TEST_TARGET_DIR = originalTestDir;
+    } else {
+      delete process.env.AGY_TEST_TARGET_DIR;
+    }
+    try {
+      rmSync(sandboxParent, { recursive: true, force: true });
+    } catch {}
+  }
+});
+
+test('【稳健性修复 6-B】manage.mjs: 真实调用 uninstall 先修改配置后删目录，保证配置零丢失且时序可靠', async () => {
+  const sandboxRoot = join(tmpdir(), 'agy_uninstall_sandbox_' + Date.now());
+  const targetDir = join(sandboxRoot, 'installed_plugin');
+  const configFile = join(sandboxRoot, 'config.json');
+  const manageScript = fileURLToPath(new URL('../manage.mjs', import.meta.url));
+
+  mkdirSync(targetDir, { recursive: true });
+  writeFileSync(join(targetDir, 'dummy.txt'), 'some content', 'utf8');
+
+  const initialConfig = {
+    theme: 'atom-dark',
+    otherSetting: true,
+    plugins: {
+      'antigravity-context-ring': {
+        enabled: true,
+        userCustomKey: 'preserve_this_value'
+      },
+      'unrelated-plugin': {
+        enabled: true
+      }
+    }
+  };
+  writeFileSync(configFile, JSON.stringify(initialConfig, null, 2), 'utf8');
+
+  // 运行 manage.mjs uninstall
+  const execFileAsync = promisify(execFile);
+  const { stdout } = await execFileAsync(process.execPath, [manageScript, 'uninstall'], {
+    env: {
+      ...process.env,
+      AGY_TEST_TARGET_DIR: targetDir,
+      AGY_TEST_CONFIG_FILE: configFile
+    }
+  });
+
+  // 1. 验证时序日志输出：先禁用配置，再终止进程，最后清理目录
+  const disableStepIdx = stdout.indexOf('[0/3] 正在禁用插件配置');
+  const killStepIdx = stdout.indexOf('[1/3] 正在安全终止运行中的 Sidecar 进程');
+  const rmStepIdx = stdout.indexOf('[2/3] 正在清理插件文件');
+  assert.ok(disableStepIdx !== -1 && killStepIdx !== -1 && rmStepIdx !== -1, '必须包含三步完整卸载流程');
+  assert.ok(disableStepIdx < killStepIdx && killStepIdx < rmStepIdx, '执行时序必须为: 先改配置 -> 再停进程 -> 最后删目录');
+
+  // 2. 验证目标目录已被物理删除
+  assert.equal(existsSync(targetDir), false, '插件安装目录必须已被彻底删除');
+
+  // 3. 验证配置文件内容变更与安全保留
+  const updatedRaw = readFileSync(configFile, 'utf8');
+  const updatedConfig = JSON.parse(updatedRaw);
+  assert.equal(updatedConfig.plugins['antigravity-context-ring'].enabled, false, '插件必须被安全置为 enabled: false');
+  assert.equal(updatedConfig.plugins['antigravity-context-ring'].userCustomKey, 'preserve_this_value', '用户原有自定义配置必须原样保留');
+  assert.equal(updatedConfig.theme, 'atom-dark', '根级其他配置必须零丢失');
+  assert.equal(updatedConfig.plugins['unrelated-plugin']?.enabled, true, '其他无关插件配置必须原样保留');
+
+  // 清理临时沙箱
+  try {
+    rmSync(sandboxRoot, { recursive: true, force: true });
+  } catch {}
+});
+
+test('【稳健性修复 7-B】ring-widget: model 自身带 flex-1 时 DOM 算法精确收敛，且分屏异常完美隔离', () => {
+  // 1. 模拟 DOM 树：验证 candidateContainer 与 modelBranch 在 model 自身包含 flex-1 时的推导
+  // 结构：box -> toolbar(.flex-1) -> wrapper -> model(.flex-1)
+  const box = { contains: (node) => true };
+  const toolbar = { className: 'composer-toolbar flex-1', parentElement: box, contains: () => true };
+  const wrapper = { className: 'model-wrapper', parentElement: toolbar };
+  const modelWithFlex1 = {
+    className: 'model-btn flex-1',
+    parentElement: wrapper,
+    closest(sel) {
+      if (sel === '.flex-1') return this;
+      return null;
+    }
+  };
+  wrapper.closest = (sel) => (sel === '.flex-1' ? toolbar : null);
+  toolbar.closest = (sel) => (sel === '.flex-1' ? toolbar : null);
+
+  // 运行算法推导 flexContainer：必须从 model.parentElement 向上探查
+  const candidateContainer = modelWithFlex1.parentElement?.closest?.('.flex-1');
+  const flexContainer = (candidateContainer && box?.contains(candidateContainer))
+    ? candidateContainer
+    : (modelWithFlex1.parentElement || box);
+
+  assert.equal(flexContainer, toolbar, 'flexContainer 绝不能是 model 自身，必须是父级工具栏');
+
+  // 推导 modelBranch
+  let modelBranch = modelWithFlex1;
+  while (modelBranch && modelBranch.parentElement && modelBranch.parentElement !== flexContainer && modelBranch.parentElement !== box && modelBranch.parentElement !== (typeof document !== 'undefined' ? document.body : null)) {
+    modelBranch = modelBranch.parentElement;
+  }
+  assert.equal(modelBranch, wrapper, 'modelBranch 必须精确收敛到 flexContainer 的直接子节点 wrapper');
+
+  // 2. 模拟多分屏错误隔离：3 个分屏，中间的分屏抛出严重 DOM 异常，验证遍历挂载不受影响
+  let mountedPanes = [];
+  const fakePanes = [
+    { id: 1, name: 'pane-left' },
+    { id: 2, name: 'broken-pane-throw' },
+    { id: 3, name: 'pane-right' }
+  ];
+
+  function mockMountOrUpdatePane(comp) {
+    if (comp.id === 2) {
+      throw new Error('Fake DOMException: insertBefore failed');
+    }
+    mountedPanes.push(comp.id);
+  }
+
+  // 遍历挂载并应用异常隔离防御
+  for (const comp of fakePanes) {
+    try {
+      mockMountOrUpdatePane(comp);
+    } catch {}
+  }
+
+  assert.deepEqual(mountedPanes, [1, 3], '单个分屏 DOM 异常必须被完全隔离，正常分屏全部挂载成功');
+
+  // 3. 静态断言：mountOrUpdatePane 必须在函数层级建立完整的边界检查与 try-catch 错误隔离
+  const widgetCode = readFileSync(new URL('../assets/ring-widget.cjs', import.meta.url), 'utf8');
+  assert.ok(
+    widgetCode.includes('function mountOrUpdatePane(comp, totalPanes) {\n    if (!comp || !comp.box || !comp.model) return null;\n    try {') ||
+    widgetCode.includes('function mountOrUpdatePane(comp, totalPanes) {\r\n    if (!comp || !comp.box || !comp.model) return null;\r\n    try {'),
+    'mountOrUpdatePane 内部整体必须包裹 try-catch 实施单分屏错误隔离'
+  );
+  assert.ok(
+    widgetCode.includes('} catch {\n    return null;\n  }') ||
+    widgetCode.includes('} catch {\r\n    return null;\r\n  }'),
+    'mountOrUpdatePane 异常时必须返回 null 且杜绝抛出未捕获异常'
+  );
+});
+
+test('【AbortSignal retryable 属性】rpcCall 被 signal 取消时必须标记 retryable = false', async () => {
+  // 1. 已处于 aborted 状态的 signal
+  const preAbortedController = new AbortController();
+  preAbortedController.abort();
+  try {
+    await rpcCall({ port: 9999, csrfToken: 'x', useTls: false }, 'Test', {}, 1000, preAbortedController.signal);
+    assert.fail('应拒绝');
+  } catch (err) {
+    assert.equal(err.retryable, false, '预先取消的 RPC 错误必须标记 retryable = false');
+    assert.equal(isRetryableRpcError(err), false, 'isRetryableRpcError 必须判定为 false');
+  }
+
+  // 2. 途中触发 signal abort
+  const srv = await startServer((req, res) => {
+    // 延迟响应，等待客户端 abort
+    setTimeout(() => {
+      try { res.end('{}'); } catch {}
+    }, 1000);
+  });
+
+  try {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 20);
+    try {
+      await rpcCall({ port: srv.port, csrfToken: 'x', useTls: false }, 'Test', {}, 5000, controller.signal);
+      assert.fail('应拒绝');
+    } catch (err) {
+      assert.equal(err.retryable, false, '进行中取消的 RPC 错误必须标记 retryable = false');
+      assert.equal(isRetryableRpcError(err), false, 'isRetryableRpcError 必须判定为 false');
+    }
+  } finally {
+    await srv.close();
+  }
+});
+
+
+

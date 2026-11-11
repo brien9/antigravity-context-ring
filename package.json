@@ -1,6 +1,6 @@
 {
   "name": "antigravity-context-ring",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Native inline context window ring & RPC token telemetry for Google Antigravity Desktop App (0ms switch, ~18MB, zero-invasion).",
   "homepage": "https://github.com/brien9/antigravity-context-ring#readme",
   "repository": {
