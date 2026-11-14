@@ -35,12 +35,39 @@ function jsonGet(port, path) {
   });
 }
 
+/**
+ * 判定 CDP Target 是否为可安全注入插件的真实应用页面
+ * 过滤宿主冷启动 Splash / 暗色背景占位页 (data:text/html,...)、about:blank、devtools:、chrome-extension:、plugin: 等非工作台页面，
+ * 防止占位页误注入抢占连接数并提前终结 500ms 冷启动快频探测定时器。
+ * 兼容单测中未提供 url 字段的 Mock Target。
+ */
+export function isInjectablePageTarget(target) {
+  if (!target || target.type !== 'page' || !target.webSocketDebuggerUrl) {
+    return false;
+  }
+  if (typeof target.url === 'string' && target.url.trim().length > 0) {
+    const rawUrl = target.url.trim();
+    if (/^(?:data:|about:blank|devtools:|chrome-error:|chrome-extension:|plugin:)/i.test(rawUrl)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export async function discoverTargets(profileDir) {
-  let text;
+  let text = null;
   try {
     text = await readFile(join(profileDir, 'DevToolsActivePort'), 'utf8');
   } catch {
-    return null;
+    if (!process.env.AGY_TEST_TARGET_DIR && process.env.AGY_BROWSER_ACTIVE_PORT_FILE) {
+      try {
+        text = await readFile(process.env.AGY_BROWSER_ACTIVE_PORT_FILE, 'utf8');
+      } catch {
+        return null;
+      }
+    } else {
+      return null;
+    }
   }
 
   const port = Number(text.split(/\r?\n/)[0]);
@@ -54,17 +81,18 @@ export async function discoverTargets(profileDir) {
   }
   if (!Array.isArray(list)) return null;
 
-  // 只有成功拿到 CDP 列表时才返回数组；空数组代表宿主确认当前无页面，而不是发现失败
-  return list.filter(target => target.type === 'page' && target.webSocketDebuggerUrl);
+  // 只有成功拿到 CDP 列表时才返回数组；过滤掉 data:text/html 等启动过渡占位页
+  return list.filter(isInjectablePageTarget);
 }
 
 export class CdpConnection {
-  constructor(url) {
+  constructor(url, options = {}) {
     this.url = url;
     this.ws = null;
     this.nextId = 0;
     this.pending = new Map();
     this.closed = false;
+    this.onContextCreated = typeof options?.onContextCreated === 'function' ? options.onContextCreated : null;
   }
 
   async open() {
@@ -82,6 +110,11 @@ export class CdpConnection {
           }
         } else if (msg.method === 'Runtime.bindingCalled' && msg.params?.name === BINDING) {
           this.handleBinding(msg.params);
+        } else if (msg.method === 'Runtime.executionContextCreated') {
+          const auxData = msg.params?.context?.auxData;
+          if (!auxData || auxData.isDefault !== false) {
+            try { this.onContextCreated?.(msg.params?.context); } catch {}
+          }
         }
       } catch {}
     });
@@ -332,8 +365,10 @@ export class RuntimeBridgeManager {
   async _performSync(gen) {
     if (!this.running || this.generation !== gen) return;
 
-    const targets = await this.discoverTargets(this.profileDir);
+    const rawTargets = await this.discoverTargets(this.profileDir);
     if (!this.running || this.generation !== gen) return;
+
+    const targets = Array.isArray(rawTargets) ? rawTargets.filter(isInjectablePageTarget) : null;
 
     if (targets !== null) {
       const activeUrls = new Set(targets.map(t => t.webSocketDebuggerUrl));
@@ -370,7 +405,13 @@ export class RuntimeBridgeManager {
 
       if (!conn) {
         logBridge(`Found new target: ${target.title || target.url || url}`);
-        conn = new CdpConnection(url);
+        conn = new CdpConnection(url, {
+          onContextCreated: () => {
+            if (this.running && !conn.closed) {
+              this.sync();
+            }
+          }
+        });
         try {
           await conn.open();
           if (!this.running || this.generation !== gen) {

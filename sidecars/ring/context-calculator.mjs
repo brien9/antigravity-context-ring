@@ -1,4 +1,13 @@
-import { getPlatformTruncationLimit, DEFAULT_PLATFORM_LIMIT, isKnownModel } from './model-limits.mjs';
+import {
+  getPlatformTruncationLimit,
+  DEFAULT_PLATFORM_LIMIT,
+  isKnownModel,
+  isSameModelFamily,
+  isPlanExecutePartnerModel,
+  isCompatibleRuntimeModel,
+  resolveModelFamilyKey,
+  hasCustomLimitOverride,
+} from './model-limits.mjs';
 
 // 步骤类型常量（对齐 Antigravity Language Server 协议）
 export const StepType = {
@@ -7,6 +16,7 @@ export const StepType = {
   CHECKPOINT: 'CORTEX_STEP_TYPE_CHECKPOINT',
   INVOKE_SUBAGENT: 'CORTEX_STEP_TYPE_INVOKE_SUBAGENT',
   GENERATE_IMAGE: 'CORTEX_STEP_TYPE_GENERATE_IMAGE',
+  SYSTEM_MESSAGE: 'CORTEX_STEP_TYPE_SYSTEM_MESSAGE',
 };
 
 // 触发上下文压缩检测的双重门槛（绝对值 + 比例）
@@ -50,6 +60,18 @@ function parseUserInputText(step) {
   const ui = step.userInput;
   if (!ui || typeof ui !== 'object') return '';
   return typeof ui.userResponse === 'string' ? ui.userResponse : '';
+}
+
+/**
+ * 解析系统消息步骤文本（如 Swarm Worker 初始任务分配、留言板唤醒及 /btw 侧边上下文注入）
+ */
+function parseSystemMessageText(step) {
+  const sm = step.systemMessage;
+  if (!sm || typeof sm !== 'object') return '';
+  if (typeof sm.message === 'string') return sm.message;
+  if (typeof sm.content === 'string') return sm.content;
+  if (typeof sm.text === 'string') return sm.text;
+  return '';
 }
 
 /**
@@ -121,8 +143,10 @@ export function processTrajectorySteps(steps = [], options = {}) {
   const isTruncated = !!options.isTruncated;
   if (!Array.isArray(steps) || steps.length === 0) {
     const emptyModel = initialSelected || fallbackModel;
-    const limit = emptyModel ? getPlatformTruncationLimit(emptyModel, options.customLimits) : DEFAULT_PLATFORM_LIMIT;
-    const known = isKnownModel(emptyModel, options.customLimits);
+    const limit = emptyModel
+      ? getPlatformTruncationLimit(emptyModel, options.customLimits, options.dynamicModelAliases, options.dynamicModelLimits)
+      : DEFAULT_PLATFORM_LIMIT;
+    const known = isKnownModel(emptyModel, options.customLimits, options.dynamicKnownModels, options.dynamicModelLimits);
     return {
       ready: false, // 无有效步骤，处于中性等待状态
       contextUsed: 0,
@@ -204,8 +228,19 @@ export function processTrajectorySteps(steps = [], options = {}) {
     }
 
     // 防线 2：模型连续性守卫（跨模型载荷重构：异构 Thinking 块剥离、System Prompt 与工具模板切换）
-    // 注意：若 normModel 为空（部分中间步骤缺失 model 字段），默认继承上一有效模型，避免误触发模型切换
-    const isModelSwitched = !!(normModel && lastCheckpointModel && normModel !== lastCheckpointModel);
+    // 注意：若 normModel 为空（部分中间步骤缺失 model 字段），默认继承上一有效模型，避免误触发模型切换；
+    // 同时，Orchestrator (M667/M668) 与其绑定执行模型 M669 共享同一累积上下文窗口，二者交替不视为跨模型重置。
+    const isPartnerTransition = !!(
+      normModel &&
+      lastCheckpointModel &&
+      isPlanExecutePartnerModel(normModel, lastCheckpointModel, options.dynamicModelAliases)
+    );
+    const isModelSwitched = !!(
+      normModel &&
+      lastCheckpointModel &&
+      normModel !== lastCheckpointModel &&
+      !isPartnerTransition
+    );
     if (isModelSwitched) {
       // 关键：模型发生切换时，立即将基准与峰值重锚定（Re-anchor）到新模型的当前水位！
       // 既不误报压缩，又彻底消除下一回合（同模型）因拿旧模型高水位比对导致的延迟误报
@@ -237,6 +272,47 @@ export function processTrajectorySteps(steps = [], options = {}) {
     lastCheckpointInputTokens = currentInputTotal;
     if (normModel) lastCheckpointModel = normModel;
     lastCheckpointStepIndex = currentStepIndex;
+  };
+
+  const applyAuthoritativeModelAnchor = (candidateUsageModel, actualStepIndex) => {
+    if (!candidateUsageModel) return;
+    // 保护 Orchestrator 主模型：当主选模型已是 Orchestrator (M667/M668) 时，其绑定的执行子模型 M669 不得篡改主模型身份
+    const isCurrentSelectedOrchestrator =
+      resolveModelFamilyKey(selectedModel, options.dynamicModelAliases) === 'FAMILY_ORCHESTRATOR';
+    if (
+      isCurrentSelectedOrchestrator &&
+      isPlanExecutePartnerModel(selectedModel, candidateUsageModel, options.dynamicModelAliases)
+    ) {
+      if (awaitingCheckpointModelReanchor && actualStepIndex > latestUserInputIndex) {
+        awaitingCheckpointModelReanchor = false;
+      }
+      return;
+    }
+
+    // 若此前因截断窗口或执行步先锚定了 M669，遇到绑定的主规划模型 M667/M668 时立即恢复为主规划模型
+    const isCandidateOrchestrator =
+      resolveModelFamilyKey(candidateUsageModel, options.dynamicModelAliases) === 'FAMILY_ORCHESTRATOR';
+    if (
+      isCandidateOrchestrator &&
+      selectedModel &&
+      isPlanExecutePartnerModel(selectedModel, candidateUsageModel, options.dynamicModelAliases)
+    ) {
+      selectedModel = candidateUsageModel;
+      awaitingCheckpointModelReanchor = false;
+      return;
+    }
+
+    // 场景 A：0 USER_INPUT 会话（如 Swarm Worker 独立轨迹或纯 Checkpoint 历史片段），允许权威快照动态锚定分母
+    if (latestUserInputIndex === -1) {
+      selectedModel = candidateUsageModel;
+      return;
+    }
+
+    // 场景 B：常规会话中当前回合 USER_INPUT 未携带显式 planModel，由该回合首个权威快照重锚定
+    if (awaitingCheckpointModelReanchor && actualStepIndex > latestUserInputIndex) {
+      selectedModel = candidateUsageModel;
+      awaitingCheckpointModelReanchor = false;
+    }
   };
 
   let maxStepIndex = -1;
@@ -281,9 +357,18 @@ export function processTrajectorySteps(steps = [], options = {}) {
         selectedModel = selected;
         awaitingCheckpointModelReanchor = false;
       } else {
-        // 新回合未携带模型配置：等该回合的首个权威 Checkpoint 到达后再锚定分母。
+        // 新回合未携带模型配置：若外部提供了当前 UI 选中模型则先作为过渡候选，等该回合的首个权威 Checkpoint 到达后再锚定分母。
+        if (initialSelected) {
+          selectedModel = initialSelected;
+        }
         awaitingCheckpointModelReanchor = true;
       }
+    }
+
+    // 1b. 系统消息步骤增量估算（Swarm Worker 初始 brief / 留言板唤醒 / 侧边提问前缀）
+    if (stepType === StepType.SYSTEM_MESSAGE) {
+      const text = parseSystemMessageText(step);
+      estimationDeltaSinceSnapshot += estimateTokensFromText(text);
     }
 
     // 2. Planner 步骤增量估算
@@ -307,11 +392,7 @@ export function processTrajectorySteps(steps = [], options = {}) {
       if (usage) {
         if (usage.model) {
           checkpointModel = usage.model;
-          // 仅在该 USER_INPUT 之后的首个 Checkpoint 上重新锚定；子 Agent 步骤不会触发此分支。
-          if (awaitingCheckpointModelReanchor && actualStepIndex > latestUserInputIndex) {
-            selectedModel = usage.model;
-            awaitingCheckpointModelReanchor = false;
-          }
+          applyAuthoritativeModelAnchor(usage.model, actualStepIndex);
         }
 
         const currentInputTotal = usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
@@ -331,10 +412,7 @@ export function processTrajectorySteps(steps = [], options = {}) {
       if (usage) {
         if (usage.model) {
           checkpointModel = usage.model;
-          if (awaitingCheckpointModelReanchor && actualStepIndex > latestUserInputIndex) {
-            selectedModel = usage.model;
-            awaitingCheckpointModelReanchor = false;
-          }
+          applyAuthoritativeModelAnchor(usage.model, actualStepIndex);
         }
 
         const currentInputTotal = usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
@@ -351,8 +429,24 @@ export function processTrajectorySteps(steps = [], options = {}) {
   // 严禁子 Agent 或普通步骤篡改分母：
   // 决定分母容量（contextLimit）的标尺严格遵从：selectedModel -> checkpointModel -> executionModel -> fallback
   const effectiveCapacityModel = selectedModel || checkpointModel || executionModel || initialSelected || fallbackModel;
-  const contextLimit = getPlatformTruncationLimit(effectiveCapacityModel, options.customLimits);
-  const known = isKnownModel(effectiveCapacityModel, options.customLimits);
+  let contextLimit = getPlatformTruncationLimit(
+    effectiveCapacityModel,
+    options.customLimits,
+    options.dynamicModelAliases,
+    options.dynamicModelLimits
+  );
+  const runtimeLimit = Number(options.runtimeMaxContextTokens);
+  const runtimeModel = typeof options.runtimeContextModel === 'string' ? options.runtimeContextModel.trim() : '';
+  const hasExplicitCustomLimit = hasCustomLimitOverride(effectiveCapacityModel, options.customLimits, options.dynamicModelAliases);
+  if (
+    !hasExplicitCustomLimit &&
+    Number.isSafeInteger(runtimeLimit) &&
+    runtimeLimit > 0 &&
+    (!runtimeModel || !effectiveCapacityModel || isCompatibleRuntimeModel(effectiveCapacityModel, runtimeModel, options.dynamicModelAliases))
+  ) {
+    contextLimit = runtimeLimit;
+  }
+  const known = isKnownModel(effectiveCapacityModel, options.customLimits, options.dynamicKnownModels, options.dynamicModelLimits);
   const isUnknownModel = !known && !!effectiveCapacityModel;
 
   const stepCount = steps.length;

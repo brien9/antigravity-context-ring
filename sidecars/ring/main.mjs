@@ -14,18 +14,22 @@ const __dirname = dirname(__filename);
 /**
  * 精准识别是否为本插件的 Sidecar 守护进程
  * 严格白名单三重校验：
- * 1. 必须是 node 可执行程序
+ * 1. 必须是受支持的 JS/Electron 运行时可执行程序（node 或 Antigravity/agy-node/electron）
  * 2. 专属标识完整匹配（完整参数边界，杜绝子串碰撞），且入口脚本为 main.mjs
  * 3. 或明确属于 antigravity-context-ring 插件目录下的 main.mjs
- * 4. 严格排除自身进程 ID
+ * 4. 严格排除自身进程 ID 与无关宿主 GUI 进程
  */
 export function isContextRingProcess(commandLine, processId = null, currentPid = process.pid, testTargetDir = process.env.AGY_TEST_TARGET_DIR) {
   if (!commandLine || typeof commandLine !== 'string') return false;
   if (processId !== null && Number(processId) === Number(currentPid)) return false;
 
   const cmd = commandLine.trim();
-  const isNode = /(?:^|[\s"'\\\/])node(?:\.exe)?(?:["']|\s|$)/i.test(cmd);
-  if (!isNode) return false;
+  const strippedCmd = cmd.replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S+)\s+)+/, '');
+  const exeMatch = strippedCmd.match(/^(?:"([^"]+)"|'([^']+)'|(\S+))/);
+  const exePath = (exeMatch?.[1] || exeMatch?.[2] || exeMatch?.[3] || '').replace(/\\/g, '/').toLowerCase();
+  const exeBase = exePath.split('/').pop() || '';
+  const isSupportedRuntime = /^(?:node|antigravity|electron|agy-node)(?:\.exe|\.cmd)?$/.test(exeBase);
+  if (!isSupportedRuntime) return false;
 
   const normalizedCmd = cmd.replace(/\\/g, '/');
 
@@ -59,6 +63,25 @@ export function isContextRingProcess(commandLine, processId = null, currentPid =
   return false;
 }
 
+/**
+ * 判断进程命令行是否为真正的 Antigravity 宿主 GUI/服务进程（排除 Electron-as-Node 拉起的 Sidecar 自身及其他插件 Sidecar）
+ */
+export function isAntigravityHostCommandLine(commandLine, processId = null, currentPid = process.pid) {
+  if (processId !== null && Number(processId) === Number(currentPid)) return false;
+  if (!commandLine || typeof commandLine !== 'string') return true;
+  const lower = commandLine.replace(/\\/g, '/').toLowerCase();
+  if (
+    lower.includes('--sidecar=') ||
+    lower.includes('sidecar_sdk') ||
+    lower.includes('register_loader.js') ||
+    lower.includes('electron_run_as_node') ||
+    /(?:^|\s|["'/])main\.mjs(?:\s|["']|$)/.test(lower)
+  ) {
+    return false;
+  }
+  return true;
+}
+
 export async function cleanOrphanInstances() {
   const testTargetDir = (process.env.AGY_TEST_TARGET_DIR || '').trim();
   if (process.platform === 'win32') {
@@ -66,8 +89,8 @@ export async function cleanOrphanInstances() {
       const targetFilter = testTargetDir
         ? `$normTarget = '${testTargetDir.replace(/\\/g, '/').replace(/'/g, "''").toLowerCase()}'; if ($cmd.Replace('\\', '/').ToLower().IndexOf($normTarget) -lt 0) { return $false }; `
         : `if ($cmd.Replace('\\', '/').ToLower().IndexOf('clean_test_sandbox') -ge 0) { return $false }; `;
-      // 严格白名单：进程必须是 node.exe；完整匹配 --sidecar=antigravity-context-ring 且为 main.mjs，或专属插件路径下的 main.mjs
-      const psCmd = `Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" | Where-Object { ` +
+      // 严格白名单：覆盖 node.exe 与 Antigravity.exe (ELECTRON_RUN_AS_NODE)；仅匹配专属插件参数或路径，绝不误伤宿主 GUI
+      const psCmd = `Get-CimInstance Win32_Process -Filter "Name = 'node.exe' OR Name = 'Antigravity.exe'" | Where-Object { ` +
         `$cmd = $_.CommandLine; ` +
         `if ([string]::IsNullOrWhiteSpace($cmd)) { return $false }; ` +
         targetFilter +
@@ -102,17 +125,59 @@ export async function scanHostPids() {
   }
   if (process.platform === 'win32') {
     try {
-      const psCmd = `Get-Process antigravity -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id`;
-      const { stdout } = await execFileAsync('powershell', ['-NoProfile', '-Command', psCmd]);
-      const pids = stdout.trim().split(/\r?\n/).map(s => parseInt(s.trim(), 10)).filter(n => Number.isInteger(n) && n > 0);
+      const psCmd = `Get-CimInstance Win32_Process -Filter "Name = 'Antigravity.exe'" -ErrorAction Stop | Select-Object ProcessId, CommandLine | ConvertTo-Json -Compress`;
+      const { stdout } = await execFileAsync('powershell', ['-NoProfile', '-NonInteractive', '-Command', psCmd]);
+      const raw = stdout.trim();
+      if (!raw || raw === 'null') return new Set();
+      const parsed = JSON.parse(raw);
+      const list = Array.isArray(parsed) ? parsed : [parsed];
+      const pids = [];
+      for (const item of list) {
+        const pid = Number(item?.ProcessId);
+        if (Number.isInteger(pid) && pid > 0 && isAntigravityHostCommandLine(item?.CommandLine || '', pid, process.pid)) {
+          pids.push(pid);
+        }
+      }
       return new Set(pids);
-    } catch {}
+    } catch {
+      try {
+        // WMI 降级分支：仅采集拥有可见主窗口句柄的宿主 GUI 进程，防止将无窗口的 ELECTRON_RUN_AS_NODE Sidecar 孤儿（如 swarm_board）误判为宿主
+        const psFallback = `Get-Process antigravity -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 -and $_.Id -ne ${process.pid} } | Select-Object -ExpandProperty Id`;
+        const { stdout } = await execFileAsync('powershell', ['-NoProfile', '-Command', psFallback]);
+        const pids = stdout.trim().split(/\r?\n/).map(s => parseInt(s.trim(), 10)).filter(n => Number.isInteger(n) && n > 0 && n !== process.pid);
+        return new Set(pids);
+      } catch {}
+    }
   } else {
     try {
-      const { stdout } = await execFileAsync('pgrep', ['-i', 'antigravity'], { encoding: 'utf8', timeout: 3000 });
-      const pids = stdout.trim().split(/\s+/).map(s => parseInt(s.trim(), 10)).filter(n => Number.isInteger(n) && n > 0);
+      const { stdout } = await execFileAsync('ps', ['-ax', '-o', 'pid=,command='], { encoding: 'utf8', timeout: 3000 });
+      const pids = [];
+      for (const line of stdout.split('\n')) {
+        const match = line.trim().match(/^(\d+)\s+(.+)$/);
+        if (!match) continue;
+        const pid = parseInt(match[1], 10);
+        const cmd = match[2];
+        if (Number.isInteger(pid) && pid > 0 && cmd.toLowerCase().includes('antigravity') && isAntigravityHostCommandLine(cmd, pid, process.pid)) {
+          pids.push(pid);
+        }
+      }
       return new Set(pids);
-    } catch {}
+    } catch {
+      try {
+        const { stdout } = await execFileAsync('pgrep', ['-f', '-i', 'antigravity'], { encoding: 'utf8', timeout: 3000 });
+        const rawPids = stdout.trim().split(/\s+/).map(s => parseInt(s.trim(), 10)).filter(n => Number.isInteger(n) && n > 0 && n !== process.pid);
+        const verifiedPids = [];
+        for (const pid of rawPids) {
+          try {
+            const { stdout: cmdOut } = await execFileAsync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8', timeout: 1500 });
+            if (isAntigravityHostCommandLine(cmdOut.trim(), pid, process.pid)) {
+              verifiedPids.push(pid);
+            }
+          } catch {}
+        }
+        return new Set(verifiedPids);
+      } catch {}
+    }
   }
   return new Set();
 }

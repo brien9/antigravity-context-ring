@@ -19,7 +19,7 @@ Write-Host "==========================================" -ForegroundColor Cyan
 # 0. 精准终止历史残留 Sidecar 孤儿进程（严格白名单）
 Write-Host "[0/3] Terminating orphan Sidecar processes..." -ForegroundColor Yellow
 try {
-    Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue | Where-Object { 
+    Get-CimInstance Win32_Process -Filter "Name = 'node.exe' OR Name = 'Antigravity.exe'" -ErrorAction SilentlyContinue | Where-Object {
         $cmd = $_.CommandLine
         if ([string]::IsNullOrWhiteSpace($cmd)) { return $false }
         if (-not [string]::IsNullOrWhiteSpace($CustomTargetDir)) {
@@ -129,7 +129,7 @@ $jsonContent = $config | ConvertTo-Json -Depth 20
 # 4. 若 Antigravity 宿主正在运行，自动无感拉起与宿主共存亡的 Sidecar 守护进程（测试隔离模式跳过自动拉起）
 $antigravityProc = Get-Process antigravity -ErrorAction SilentlyContinue
 if ($antigravityProc -and -not $CustomTargetDir) {
-    $existingSidecar = Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue | Where-Object {
+    $existingSidecar = Get-CimInstance Win32_Process -Filter "Name = 'node.exe' OR Name = 'Antigravity.exe'" -ErrorAction SilentlyContinue | Where-Object {
         $cmd = $_.CommandLine
         if ([string]::IsNullOrWhiteSpace($cmd)) { return $false }
         $cmd -match '(?:^|\s)--sidecar=antigravity-context-ring(?:\s|$)'

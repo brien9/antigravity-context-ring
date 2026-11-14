@@ -360,8 +360,8 @@ test('【稳健性修复 7-B】ring-widget: model 自身带 flex-1 时 DOM 算�
   // 3. 静态断言：mountOrUpdatePane 必须在函数层级建立完整的边界检查与 try-catch 错误隔离
   const widgetCode = readFileSync(new URL('../assets/ring-widget.cjs', import.meta.url), 'utf8');
   assert.ok(
-    widgetCode.includes('function mountOrUpdatePane(comp, totalPanes) {\n    if (!comp || !comp.box || !comp.model) return null;\n    try {') ||
-    widgetCode.includes('function mountOrUpdatePane(comp, totalPanes) {\r\n    if (!comp || !comp.box || !comp.model) return null;\r\n    try {'),
+    widgetCode.includes('function mountOrUpdatePane(comp, totalPanes) {\n    if (!comp || !comp.box) return null;\n    try {') ||
+    widgetCode.includes('function mountOrUpdatePane(comp, totalPanes) {\r\n    if (!comp || !comp.box) return null;\r\n    try {'),
     'mountOrUpdatePane 内部整体必须包裹 try-catch 实施单分屏错误隔离'
   );
   assert.ok(

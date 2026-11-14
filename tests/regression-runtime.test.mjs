@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { processTrajectorySteps, StepType } from '../sidecars/ring/context-calculator.mjs';
 import { formatContextResult, getBackendCachedSnapshot, setBackendCachedSnapshot } from '../sidecars/ring/context-service.mjs';
-import { isContextRingProcess } from '../sidecars/ring/main.mjs';
+import { isContextRingProcess, isAntigravityHostCommandLine } from '../sidecars/ring/main.mjs';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -432,4 +432,42 @@ test('【深度审计 Bug 3 & Bug 4 & Bug 5】setCachedSnapshot 回退读取 L2 
     delete globalThis.getComputedStyle;
     delete globalThis.MutationObserver;
   }
+});
+
+test('【深度审计 Bug 6】main.mjs: Electron-as-Node (Antigravity.exe) Sidecar 识别与真实宿主 GUI 进程隔离', () => {
+  const currentPid = 9999;
+
+  // 1. isContextRingProcess: 识别 Electron-as-Node Antigravity.exe / electron.exe / agy-node 拉起的本插件 Sidecar
+  const electronSidecarWin = 'ELECTRON_RUN_AS_NODE=1 "C:\\Users\\alice\\AppData\\Local\\Programs\\Antigravity\\Antigravity.exe" "C:\\Users\\alice\\.gemini\\config\\plugins\\antigravity-context-ring\\sidecars\\ring\\main.mjs" --sidecar=antigravity-context-ring';
+  const electronSidecarFlagOnly = '"C:\\Program Files\\Antigravity\\Antigravity.exe" "D:\\custom\\sidecars\\ring\\main.mjs" --sidecar=antigravity-context-ring';
+  const agyNodeSidecar = '"/Applications/Antigravity.app/Contents/MacOS/agy-node" "/Users/alice/.gemini/config/plugins/antigravity-context-ring/sidecars/ring/main.mjs"';
+  const electronMacSidecar = '"/Applications/Antigravity.app/Contents/Frameworks/Electron Helper.app/Contents/MacOS/electron" "/Users/alice/.gemini/config/plugins/antigravity-context-ring/sidecars/ring/main.mjs" --sidecar=antigravity-context-ring';
+
+  assert.equal(isContextRingProcess(electronSidecarWin, 101, currentPid, ''), true, 'Antigravity.exe Electron-as-Node 拉起的本插件 Sidecar 必须被识别');
+  assert.equal(isContextRingProcess(electronSidecarFlagOnly, 102, currentPid, ''), true, 'Antigravity.exe 带 --sidecar=antigravity-context-ring 必须被识别');
+  assert.equal(isContextRingProcess(agyNodeSidecar, 103, currentPid, ''), true, 'agy-node 运行插件目录 main.mjs 必须被识别');
+  assert.equal(isContextRingProcess(electronMacSidecar, 104, currentPid, ''), true, 'electron 运行插件目录 main.mjs 必须被识别');
+
+  // 2. isContextRingProcess: 坚决排除真正的 Antigravity 宿主 GUI 与其他插件 Sidecar
+  const realHostGuiWin = '"C:\\Users\\alice\\AppData\\Local\\Programs\\Antigravity\\Antigravity.exe" --type=renderer --user-data-dir="C:\\Users\\alice\\AppData\\Roaming\\Antigravity"';
+  const realHostMainWin = '"C:\\Users\\alice\\AppData\\Local\\Programs\\Antigravity\\Antigravity.exe"';
+  const otherPluginSidecar = '"C:\\Users\\alice\\AppData\\Local\\Programs\\Antigravity\\Antigravity.exe" "C:\\plugins\\other-plugin\\main.mjs" --sidecar=other-plugin';
+  const fakeFlagSidecar = '"C:\\Users\\alice\\AppData\\Local\\Programs\\Antigravity\\Antigravity.exe" "D:\\other\\server.js" --sidecar=antigravity-context-ring-fake';
+
+  assert.equal(isContextRingProcess(realHostGuiWin, 201, currentPid, ''), false, '真正的 Antigravity 宿主渲染进程绝不能被误判为 Sidecar');
+  assert.equal(isContextRingProcess(realHostMainWin, 202, currentPid, ''), false, '真正的 Antigravity 宿主主进程绝不能被误判为 Sidecar');
+  assert.equal(isContextRingProcess(otherPluginSidecar, 203, currentPid, ''), false, '其他插件的 Antigravity.exe Sidecar 绝不能被误杀');
+  assert.equal(isContextRingProcess(fakeFlagSidecar, 204, currentPid, ''), false, '子串伪造 --sidecar 标识必须被拦截');
+  assert.equal(isContextRingProcess(electronSidecarWin, currentPid, currentPid, ''), false, '自身 PID 必须排除');
+
+  // 3. isAntigravityHostCommandLine: 识别真宿主 GUI，排除 Electron-as-Node Sidecar 及自身 PID
+  assert.equal(isAntigravityHostCommandLine(realHostGuiWin, 201, currentPid), true, '宿主 GUI 渲染进程必须判定为宿主');
+  assert.equal(isAntigravityHostCommandLine(realHostMainWin, 202, currentPid), true, '宿主 GUI 主进程必须判定为宿主');
+  assert.equal(isAntigravityHostCommandLine('', 205, currentPid), true, '空命令行按平台默认策略保底视为宿主候选');
+  assert.equal(isAntigravityHostCommandLine(electronSidecarWin, 101, currentPid), false, '本插件 Electron-as-Node Sidecar 绝不能被视为宿主');
+  assert.equal(isAntigravityHostCommandLine(otherPluginSidecar, 203, currentPid), false, '其他插件 --sidecar= 进程绝不能被视为宿主');
+  assert.equal(isAntigravityHostCommandLine('"C:\\Antigravity.exe" "C:\\sidecar_sdk\\boot.js"', 206, currentPid), false, '包含 sidecar_sdk 的宿主子进程不得被视为 GUI 宿主');
+  assert.equal(isAntigravityHostCommandLine('"C:\\Antigravity.exe" --require "C:\\register_loader.js"', 207, currentPid), false, '包含 register_loader.js 的辅助进程不得被视为 GUI 宿主');
+  assert.equal(isAntigravityHostCommandLine('"C:\\Antigravity.exe" "D:\\app\\main.mjs"', 208, currentPid), false, '直接运行 main.mjs 的节点进程不得被视为 GUI 宿主');
+  assert.equal(isAntigravityHostCommandLine(realHostMainWin, currentPid, currentPid), false, '自身 PID 绝不能被视为宿主');
 });

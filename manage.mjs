@@ -1,4 +1,4 @@
-import { rm, mkdir, cp, readFile, writeFile } from 'node:fs/promises';
+import { rm, mkdir, cp, readFile, writeFile, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -65,7 +65,27 @@ async function readJson(file, fallback = {}) {
 }
 
 async function writeJson(file, data) {
-  await writeFile(file, JSON.stringify(data, null, 2) + '\n', 'utf8');
+  const payload = JSON.stringify(data, null, 2) + '\n';
+  const tmpFile = `${file}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+  try {
+    await writeFile(tmpFile, payload, 'utf8');
+    await rename(tmpFile, file);
+  } catch {
+    try { await rm(tmpFile, { force: true }); } catch {}
+    await writeFile(file, payload, 'utf8');
+  }
+}
+
+/**
+ * 判定插件在 config.json 中是否处于启用状态
+ * 兼容显式启用 (enabled: true) 与 Antigravity 新版插件系统的 opt-out 默认启用语义 (目录完整部署且 enabled !== false)
+ */
+function isPluginEnabledInConfig(config, filesHealthy = false, pluginKey = PLUGIN_KEY) {
+  const explicit = config?.plugins?.[pluginKey]?.enabled;
+  if (typeof explicit === 'boolean') {
+    return explicit;
+  }
+  return Boolean(filesHealthy);
 }
 
 async function install() {
@@ -173,7 +193,7 @@ async function findRunningSidecarPids() {
       const targetFilter = testTargetDir
         ? `$normTarget = '${testTargetDir.replace(/\\/g, '/').replace(/'/g, "''").toLowerCase()}'; if ($cmd.Replace('\\', '/').ToLower().IndexOf($normTarget) -lt 0) { return $false }; `
         : `if ($cmd.Replace('\\', '/').ToLower().IndexOf('clean_test_sandbox') -ge 0) { return $false }; `;
-      const psCmd = `Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" | Where-Object { ` +
+      const psCmd = `Get-CimInstance Win32_Process -Filter "Name = 'node.exe' OR Name = 'Antigravity.exe'" | Where-Object { ` +
         `$cmd = $_.CommandLine; ` +
         `if ([string]::IsNullOrWhiteSpace($cmd)) { return $false }; ` +
         targetFilter +
@@ -218,14 +238,19 @@ async function status() {
   const filesHealthy = dirExists && pluginJsonExists && mainExists && widgetExists;
 
   const config = existsSync(CONFIG_FILE) ? await readJson(CONFIG_FILE, {}) : {};
-  const enabled = Boolean(config?.plugins?.['antigravity-context-ring']?.enabled);
+  const explicitEnabled = config?.plugins?.[PLUGIN_KEY]?.enabled;
+  const enabled = isPluginEnabledInConfig(config, filesHealthy, PLUGIN_KEY);
 
   const hostPids = await scanHostPids().catch(() => new Set());
   const sidecarPids = await findRunningSidecarPids();
   const lsInfo = await discoverLanguageServer(false).catch(() => null);
 
+  const configStatusLabel = enabled
+    ? (explicitEnabled === true ? '已启用 (enabled: true)' : '已启用 (默认启用 / opt-out)')
+    : '未启用';
+
   console.log(`插件目录: ${TARGET_DIR} (${filesHealthy ? '已部署且完整' : '未部署或缺失文件'})`);
-  console.log(`配置状态: ${enabled ? '已启用 (enabled: true)' : '未启用'} (${CONFIG_FILE})`);
+  console.log(`配置状态: ${configStatusLabel} (${CONFIG_FILE})`);
   console.log(`宿主进程: ${hostPids.size > 0 ? `运行中 (PIDs: ${Array.from(hostPids).join(', ')})` : '未检测到运行中的 Antigravity'}`);
   console.log(`守护进程: ${sidecarPids.length > 0 ? `运行中 (PIDs: ${sidecarPids.join(', ')})` : '未运行'}`);
   console.log(`语言服务: ${lsInfo ? `已连接 (127.0.0.1:${lsInfo.port}, PID: ${lsInfo.pid}, TLS: ${lsInfo.useTls})` : '未发现活跃 Language Server'}`);
@@ -306,6 +331,7 @@ export {
   normalizeConfigForWrite,
   readJsonForWrite,
   writeJson,
+  isPluginEnabledInConfig,
   findRunningSidecarPids,
   TARGET_DIR,
   CONFIG_FILE,

@@ -76,8 +76,9 @@ function installFakeClock() {
 }
 
 // 复用产品同构 DOM/Fiber/宿主桥 mock 骨架，让真实 widget 在 Node 测试进程内完整挂载运行
-function buildWidgetDomHarness({ getSnapshot, initialModelText, providerState }) {
+function buildWidgetDomHarness({ getSnapshot, initialModelText, initialAriaLabel = '', providerState }) {
   let currentModelText = initialModelText;
+  let currentAriaLabel = initialAriaLabel;
   let mutationCb = null;
   const rpcRequests = [];
   const CID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
@@ -120,7 +121,7 @@ function buildWidgetDomHarness({ getSnapshot, initialModelText, providerState })
     parentElement: flexContainer,
     get textContent() { return currentModelText; },
     getClientRects: () => [{ width: 80, height: 24 }],
-    getAttribute: () => '',
+    getAttribute: (name) => (name === 'aria-label' ? currentAriaLabel : ''),
     closest: (sel) => (sel === '[data-testid="agent-input-box"]' ? box : (sel.includes('flex') ? flexContainer : null))
   };
   const editorEl = {
@@ -189,6 +190,7 @@ function buildWidgetDomHarness({ getSnapshot, initialModelText, providerState })
     CID,
     rpcRequests,
     setModelText: (t) => { currentModelText = t; },
+    setAriaLabel: (a) => { currentAriaLabel = a; },
     getShadowText: (id) => shadowMap.get(id)?.textContent ?? '',
     triggerMutation: () => { if (mutationCb) mutationCb(); },
     cleanup() {
@@ -556,4 +558,79 @@ test('【行为级 5】install.ps1 配置安全: 空白可初始化、损坏拒�
   assert.equal(cfg4.plugins['other-plugin'].port, 8123, '其他插件配置必须完整保留');
   assert.equal(cfg4.plugins['antigravity-context-ring'].note, 'user custom', '本插件对象内的额外字段必须保留');
   assert.equal(cfg4.plugins['antigravity-context-ring'].enabled, true, '安装后必须启用本插件');
+});
+
+test('【行为级 7】草稿态 getDraftSnapshot 动态 256.0K / 128.0K / 80.0K 提示与切模型立即刷新', async () => {
+  const h = buildWidgetDomHarness({
+    initialModelText: 'Gemini 4 Hydrogen (Medium) 新',
+    providerState: { conversationId: null, trajectorySlice: { totalStepsLength: 0 }, turns: [] },
+    getSnapshot: () => OK_SNAPSHOT
+  });
+
+  try {
+    installAgContextRingWidget();
+    await new Promise((r) => setTimeout(r, 30));
+
+    assert.equal(h.rpcRequests.length, 0, '草稿态挂载不得发起 RPC');
+    assert.equal(h.getShadowText('tooltip-text'), '新会话 · 0.0K / 256.0K 上下文未占用', 'Gemini 4 Hydrogen 线上默认草稿应显示 256.0K');
+
+    // 切换为 GPT-OSS 120B (Medium) 注意 -> 触发 MutationObserver 120ms 防抖并在短路分支立即刷新为 80.0K
+    h.setModelText('GPT-OSS 120B (Medium) 注意');
+    h.triggerMutation();
+    await new Promise((r) => setTimeout(r, 160));
+    assert.equal(h.getShadowText('tooltip-text'), '新会话 · 0.0K / 80.0K 上下文未占用', '切换 GPT-OSS 120B 后必须立即刷新为 80.0K');
+    assert.equal(h.rpcRequests.length, 0, '草稿态切模型不得发起 RPC');
+
+    // 切换为 Gemini 2.5 Pro -> 立即刷新为 128.0K
+    h.setModelText('Gemini 2.5 Pro');
+    h.triggerMutation();
+    await new Promise((r) => setTimeout(r, 160));
+    assert.equal(h.getShadowText('tooltip-text'), '新会话 · 0.0K / 128.0K 上下文未占用', '切换 Gemini 2.5 Pro 后必须立即刷新为 128.0K');
+
+    // 再切换为 Orchestrator (Argon) / Gemini 4 Carbon -> 立即刷新为 256.0K
+    h.setModelText('Orchestrator (Argon) [Notice]');
+    h.triggerMutation();
+    await new Promise((r) => setTimeout(r, 160));
+    assert.equal(h.getShadowText('tooltip-text'), '新会话 · 0.0K / 256.0K 上下文未占用', '切换 Orchestrator (Argon) 后必须立即刷新为 256.0K');
+
+    h.setModelText('Gemini 4 Carbon (High) Unavailable');
+    h.triggerMutation();
+    await new Promise((r) => setTimeout(r, 160));
+    assert.equal(h.getShadowText('tooltip-text'), '新会话 · 0.0K / 256.0K 上下文未占用', '切换 Gemini 4 Carbon 后必须保持 256.0K');
+    assert.equal(h.rpcRequests.length, 0, '全程草稿态零网络请求');
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('【行为级 8】extractPaneModelHint 剥离 UI 徽章词 (新/New/注意/Notice/Unavailable) 并覆盖 aria-label 回退', async () => {
+  const badgeInputs = [
+    { text: '选择模型: Gemini 4 Hydrogen (Medium) 新', aria: '', expected: 'Gemini 4 Hydrogen (Medium)' },
+    { text: 'Gemini 4 Hydrogen (XHigh) [New]', aria: '', expected: 'Gemini 4 Hydrogen (XHigh)' },
+    { text: 'GPT-OSS 120B (Medium) 注意', aria: '', expected: 'GPT-OSS 120B (Medium)' },
+    { text: 'Gemini 4 Carbon (High) Notice', aria: '', expected: 'Gemini 4 Carbon (High)' },
+    { text: 'Orchestrator (Argon) (Unavailable)', aria: '', expected: 'Orchestrator (Argon)' },
+    { text: '', aria: 'Select model: Gemini 4 Hydrogen (Low) （新）', expected: 'Gemini 4 Hydrogen (Low)' },
+    { text: '   ', aria: '选择模型：GPT-OSS 120B (Medium) Unavailable', expected: 'GPT-OSS 120B (Medium)' },
+  ];
+
+  for (const item of badgeInputs) {
+    const h = buildWidgetDomHarness({
+      initialModelText: item.text,
+      initialAriaLabel: item.aria,
+      getSnapshot: () => OK_SNAPSHOT
+    });
+    try {
+      installAgContextRingWidget();
+      await new Promise((r) => setTimeout(r, 30));
+      assert.equal(h.rpcRequests.length, 1, `历史会话应发起 1 次快照请求 (${item.text || item.aria})`);
+      assert.equal(
+        h.rpcRequests[0].fallbackModel,
+        item.expected,
+        `UI 徽章必须被干净剥离: "${item.text || item.aria}" -> "${item.expected}"`
+      );
+    } finally {
+      h.cleanup();
+    }
+  }
 });

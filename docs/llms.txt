@@ -1,15 +1,16 @@
 # Antigravity Context Ring
 
-> Native inline context window telemetry & 256K physical truncation monitor for Google Antigravity Desktop App.
+> Native inline context window telemetry & multi-tier physical truncation monitor (256K / 160K / 128K / 80K + self-learning maxContextTokens sync) for Google Antigravity Desktop App.
 
 ## Overview
-Antigravity Context Ring provides real-time token telemetry for the Google Antigravity Desktop App. It reads directly from local Language Server Connect-RPC snapshots, displaying context consumption against the client's 256K auto-compaction threshold via a non-invasive 19px inline ring widget.
+Antigravity Context Ring provides real-time token telemetry for the Google Antigravity Desktop App. It reads directly from local Language Server Connect-RPC snapshots, displaying context consumption against the client's real per-model auto-compaction thresholds via a non-invasive 19px inline ring widget.
 
 ## Key Technical Specifications
-- Ground-Truth Telemetry: Connect-RPC modelUsage parsing including input, output, and cache read/creation tokens without character approximations.
-- Truncation Baseline: Aligned with the 256K physical auto-compaction boundary of the desktop client.
-- Integration Method: Chrome DevTools Protocol (CDP) injection; zero modification to binary or resources/app.asar.
-- Concurrency & Isolation: Pane-level React Fiber binding prevents cross-talk across Split View composers; UI-selected model solely determines denominator capacity.
+- Ground-Truth Telemetry: Connect-RPC modelUsage parsing including input, output, and cache read/creation tokens without character approximations; supports zero-USER_INPUT Swarm/Subagent trajectories via SYSTEM_MESSAGE estimation and checkpoint re-anchoring.
+- Truncation Baseline & Self-Learning Loop: Aligned with live Language Server model_profiles & AICode Mendel cutoffs — 256K (256,000) online baseline for Gemini 4 Hydrogen (512K offline static, dynamically calibrated at runtime via GetCascadeTrajectoryGeneratorMetadata), Gemini 4 Argon / Orchestrator (Argon) / Gemini 4 Carbon / Gemini 3.8 Flash / Claude Opus & Sonnet 5.5 (adapting to experiment overrides such as claude-1m_840k); 160K Legacy M26/M35 & Claude 4; 128K Gemini 2.5; 80K (80,000) GPT-OSS 120B. Learned limits and aliases from GetCascadeTrajectoryGeneratorMetadata + GetUserStatus / GetCascadeModelConfigData flow through snapshots into frontend localStorage for zero-maintenance draft and cold-start alignment.
+- Plan-Execute Pairing: Recognizes Orchestrator (Argon) dual-model coordination (M668 Plan <-> M669 Execution) without tampering with the primary denominator or missing cross-model CHECKPOINT compactions.
+- Integration Method: Chrome DevTools Protocol (CDP) injection with non-app target filtering (data:, about:blank, plugin:), Runtime.executionContextCreated instant re-injection, and host env var fast-path LS discovery; zero modification to binary or resources/app.asar.
+- Concurrency & Isolation: Scope-isolated React Fiber binding covers Split View, split new-pane drafts, /btw (sideQuestionView), and right-side Subagent / Swarm Worker tabs (subagentView), reading Fiber selectedModel directly when hideModelSelector hides the model button.
 - Overhead: Constant ~18MB Node.js process memory footprint, near-zero idle CPU.
 
 ## Installation & Quick Start

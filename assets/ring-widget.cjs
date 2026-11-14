@@ -155,8 +155,167 @@ var __agRingCacheModule = (function() {
     return { accept: true, revision: revision };
   }
 
-  // 前端轻量模型截断阈值推导（客户端当前在役模型全线统一为 256K 基准）
-  function inferClientModelLimit(modelHint = '') {
+  const MODEL_LIMITS_STORAGE_KEY = 'ag_ring_model_limits_v1';
+  const MAX_DYNAMIC_MODEL_LIMITS = 100;
+  const dynamicModelLimits = new Map();
+  let lastModelLimitsStorageRef = null;
+
+  function normalizeClientModelKey(raw) {
+    if (!raw || typeof raw !== 'string') return '';
+    return raw
+      .replace(/[(（\[]\s*(?:新|new|注意|notice|unavailable|default)\s*[)）\]]/gi, ' ')
+      .replace(/(?:\s*[·•|/:-]\s*|\s+)\d+(?:\.\d+)?\s*[km]b?(?=\s|$|[)）\]])/gi, ' ')
+      .replace(/(?:^|(?<![a-zA-Z0-9_-]))(?:new|notice|unavailable)(?![a-zA-Z0-9_-])/gi, ' ')
+      .replace(/(?:^|(?<=[\s)）\]a-zA-Z0-9低中高])|(?<=\S)(?=(?:新|注意)+$))(?:新|注意)(?=[\s(（\[]|$|(?:新|注意)+$)/g, ' ')
+      .trim()
+      .toLowerCase()
+      .replace(/[()（）[\]_/\s.:·•|]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
+  }
+
+  function syncStorageModelLimits() {
+    const storage = typeof localStorage !== 'undefined' ? localStorage : null;
+    if (!storage || typeof storage.getItem !== 'function') return;
+    if (storage === lastModelLimitsStorageRef) return;
+    lastModelLimitsStorageRef = storage;
+    try {
+      const raw = storage.getItem(MODEL_LIMITS_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        for (const [k, v] of Object.entries(parsed)) {
+          const num = Number(v);
+          const norm = normalizeClientModelKey(k);
+          if (norm && Number.isFinite(num) && num >= 4000 && num <= 10000000) {
+            dynamicModelLimits.set(norm, Math.round(num));
+          }
+        }
+      }
+    } catch {}
+  }
+
+  function updateClientModelLimits(entries, persist = true) {
+    if (!entries || typeof entries !== 'object') return false;
+    syncStorageModelLimits();
+    const pairs = entries instanceof Map
+      ? Array.from(entries.entries())
+      : (Array.isArray(entries) ? entries : Object.entries(entries));
+    let changed = false;
+    for (const item of pairs) {
+      if (!Array.isArray(item) || item.length < 2) continue;
+      const [rawKey, rawVal] = item;
+      const keyStr = String(rawKey || '').trim();
+      if (!keyStr || /^\d+\s+models?\s+selected$/i.test(keyStr)) continue;
+      const num = Number(rawVal);
+      if (!Number.isFinite(num) || num < 4000 || num > 10000000) continue;
+      const limit = Math.round(num);
+      const norm = normalizeClientModelKey(keyStr);
+      if (!norm) continue;
+      if (dynamicModelLimits.get(norm) !== limit) {
+        if (dynamicModelLimits.has(norm)) dynamicModelLimits.delete(norm);
+        dynamicModelLimits.set(norm, limit);
+        changed = true;
+      }
+    }
+    while (dynamicModelLimits.size > MAX_DYNAMIC_MODEL_LIMITS) {
+      const oldest = dynamicModelLimits.keys().next().value;
+      if (oldest === undefined) break;
+      dynamicModelLimits.delete(oldest);
+    }
+    if (changed && persist && typeof localStorage !== 'undefined' && typeof localStorage?.setItem === 'function') {
+      try {
+        const obj = Object.fromEntries(dynamicModelLimits.entries());
+        localStorage.setItem(MODEL_LIMITS_STORAGE_KEY, JSON.stringify(obj));
+        lastModelLimitsStorageRef = localStorage;
+      } catch {}
+    }
+    return changed;
+  }
+
+  function clearClientModelLimits() {
+    dynamicModelLimits.clear();
+    lastModelLimitsStorageRef = null;
+    if (typeof localStorage !== 'undefined' && typeof localStorage?.removeItem === 'function') {
+      try { localStorage.removeItem(MODEL_LIMITS_STORAGE_KEY); } catch {}
+    }
+  }
+
+  function parseContextWindowAttr(raw) {
+    if (raw === null || raw === undefined || raw === '') return 0;
+    if (typeof raw === 'number') {
+      return (Number.isFinite(raw) && raw >= 4000 && raw <= 10000000) ? Math.round(raw) : 0;
+    }
+    const trimmed = String(raw).trim().toLowerCase();
+    if (!trimmed) return 0;
+    const unitMatch = trimmed.match(/^(\d+(?:\.\d+)?)\s*([km])b?$/);
+    if (unitMatch) {
+      const val = Math.round(parseFloat(unitMatch[1]) * (unitMatch[2] === 'm' ? 1000000 : 1000));
+      return (val >= 4000 && val <= 10000000) ? val : 0;
+    }
+    const num = Number(trimmed);
+    return (Number.isFinite(num) && num >= 4000 && num <= 10000000) ? Math.round(num) : 0;
+  }
+
+  // 前端轻量模型截断阈值推导（优先读取 DOM data-context-window 与动态自学习缓存，未命中再回退静态正则与 256K 兜底）
+  function inferClientModelLimit(modelHint = '', modelElOrOptions = null) {
+    if (modelElOrOptions && typeof modelElOrOptions === 'object') {
+      const attrRaw = typeof modelElOrOptions.getAttribute === 'function'
+        ? modelElOrOptions.getAttribute('data-context-window')
+        : modelElOrOptions.contextWindow;
+      const domLimit = parseContextWindowAttr(attrRaw);
+      if (domLimit > 0) return domLimit;
+    }
+    if (modelHint && typeof modelHint === 'object') {
+      const attrRaw = typeof modelHint.getAttribute === 'function'
+        ? modelHint.getAttribute('data-context-window')
+        : modelHint.contextWindow;
+      const domLimit = parseContextWindowAttr(attrRaw);
+      if (domLimit > 0) return domLimit;
+    }
+
+    const lower = String(typeof modelHint === 'string' ? modelHint : '').trim().toLowerCase();
+    if (!lower) return 256000;
+
+    // 0. 动态自学习缓存（后端 GetCascadeTrajectoryGeneratorMetadata / GetUserStatus 实测同步 + LocalStorage 持久化）
+    syncStorageModelLimits();
+    if (dynamicModelLimits.size > 0) {
+      const norm = normalizeClientModelKey(lower);
+      if (norm && dynamicModelLimits.has(norm)) {
+        return dynamicModelLimits.get(norm);
+      }
+      if (dynamicModelLimits.has(lower)) {
+        return dynamicModelLimits.get(lower);
+      }
+    }
+
+    // 1. Gemini 4 Hydrogen (静态离线为 512K，但线上 AICode Mendel 远端策略统一压在 256K): hydrogen / M525..M528 / canonical M432..M434
+    if (lower.includes('hydrogen') || /(?:^|[^a-z0-9])m(?:52[5-8]|43[2-4])(?=$|[^0-9])/.test(lower)) {
+      return 256000;
+    }
+
+    // 2. GPT-OSS 120B (80K)
+    if (/(?:gpt[-_\s]?oss|(?:^|[^a-z0-9])120b(?=$|[^a-z0-9]))/.test(lower)) {
+      return 80000;
+    }
+
+    // 3. Legacy M26 / M35 / Claude 4 系列 (160K)
+    if (
+      /(?:^|[^a-z0-9])m(?:26|35)(?=$|[^0-9])/.test(lower) ||
+      /(?:^|[^a-z0-9])claude(?:[-_\s]+(?:opus|sonnet|haiku))?[-_\s]+4(?:\.[0-9]+)?(?=$|[^0-9.])/.test(lower)
+    ) {
+      return 160000;
+    }
+
+    // 4. Gemini 2.5 / M50 / M18 / M148 / M198 (128K)
+    if (
+      /(?:^|[^a-z0-9])gemini[-_\s]?2[-._]5(?=$|[^0-9])/.test(lower) ||
+      /(?:^|[^a-z0-9])m(?:50|18|148|198)(?=$|[^0-9])/.test(lower)
+    ) {
+      return 128000;
+    }
+
+    // 5. Gemini 4 Argon / Orchestrator (Argon) / Gemini 4 Carbon / Gemini 3.8 Flash / Claude 5.5 及未收录模型兜底 (256K)
     return 256000;
   }
 
@@ -186,7 +345,17 @@ var __agRingCacheModule = (function() {
     }
   }
 
-  return { MemoryLRUCache, normalizeSnapshotSchema, shouldAcceptSnapshot, sanitizeLRUIndex, inferClientModelLimit, getRingColor };
+  return {
+    MemoryLRUCache,
+    normalizeSnapshotSchema,
+    shouldAcceptSnapshot,
+    sanitizeLRUIndex,
+    inferClientModelLimit,
+    updateClientModelLimits,
+    clearClientModelLimits,
+    normalizeClientModelKey,
+    getRingColor
+  };
 })();
 
 function installAgContextRingWidget() {
@@ -208,7 +377,15 @@ function installAgContextRingWidget() {
 
   // 1. 双阶前端会话级快照缓存 (In-Memory LRU Map 50 会话 + LocalStorage 持久化 100 会话)
   // 遵循成熟 Harness (Codex/WorkBuddy) 原生架构：缓存优先恢复，后台静默校准
-  const { MemoryLRUCache, normalizeSnapshotSchema, shouldAcceptSnapshot, sanitizeLRUIndex, inferClientModelLimit, getRingColor } = __agRingCacheModule;
+  const {
+    MemoryLRUCache,
+    normalizeSnapshotSchema,
+    shouldAcceptSnapshot,
+    sanitizeLRUIndex,
+    inferClientModelLimit,
+    updateClientModelLimits,
+    getRingColor
+  } = __agRingCacheModule;
   const memoryCache = new MemoryLRUCache(50);
   const STORAGE_KEY_PREFIX = 'ag_ring_snap_';
   const STORAGE_INDEX_KEY = 'ag_ring_lru_index';
@@ -302,6 +479,22 @@ function installAgContextRingWidget() {
         existing.lastAccessedAt = Date.now();
       }
       return false;
+    }
+
+    // 动态模型限额自学习（随快照同步后端动态目录与当前会话权威模型限额）
+    if (data.modelLimits && typeof data.modelLimits === 'object') {
+      updateClientModelLimits(data.modelLimits, !isStorageDegraded);
+    }
+    if (!data.isEstimated && !data.isUnknownModel && typeof data.limit === 'number' && data.limit >= 4000) {
+      const learned = [];
+      for (const candidate of [data.modelId, data.selectedModel, data.model, data.checkpointModel]) {
+        if (typeof candidate === 'string' && candidate.trim()) {
+          learned.push([candidate.trim(), data.limit]);
+        }
+      }
+      if (learned.length > 0) {
+        updateClientModelLimits(learned, !isStorageDegraded);
+      }
     }
 
     const snap = normalizeSnapshotSchema(data, lowerId);
@@ -453,18 +646,142 @@ function installAgContextRingWidget() {
     isDraft: true,
   });
 
-  function extractPaneModelHint(targetBox, modelEl) {
-    const el = modelEl || targetBox?.querySelector?.('[data-testid="model-selector-trigger"],button[aria-label*="选择模型"],button[aria-label*="Select model"]');
-    if (!el) return '';
-    const rawText = (typeof el.textContent === 'string' ? el.textContent : '').trim();
-    const text = rawText.replace(/^(?:选择模型|select model)\s*[:：-]?\s*/i, '').trim();
-    if (text) return text;
-    const aria = (typeof el.getAttribute === 'function' ? (el.getAttribute('aria-label') || '') : '').trim();
-    return aria.replace(/^(?:选择模型|select model)\s*[:：-]?\s*/i, '').trim();
+  function stripModelHintBadges(text) {
+    if (!text) return '';
+    return text
+      .replace(/[(（\[]\s*(?:新|new|注意|notice|unavailable|default)\s*[)）\]]/gi, ' ')
+      .replace(/(?:\s*[·•|/:-]\s*|\s+)\d+(?:\.\d+)?\s*[km]b?(?=\s|$|[)）\]])/gi, ' ')
+      .replace(/(?:^|(?<![a-zA-Z0-9_-]))(?:new|notice|unavailable)(?![a-zA-Z0-9_-])/gi, ' ')
+      .replace(/(?:^|(?<=[\s)）\]a-zA-Z0-9低中高])|(?<=\S)(?=(?:新|注意)+$))(?:新|注意)(?=[\s(（\[]|$|(?:新|注意)+$)/g, ' ')
+      .replace(/^[\s·•|/:-]+|[\s·•|/:-]+$/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
-  function getDraftSnapshot() {
-    return DRAFT_SNAPSHOT;
+  function readModelTriggerHint(el) {
+    if (!el) return '';
+    const rawText = (typeof el.textContent === 'string' ? el.textContent : '').trim();
+    const text = stripModelHintBadges(rawText.replace(/^(?:选择模型|select model)\s*[:：-]?\s*/i, '').trim());
+    if (text && !/^\d+\s+models?\s+selected$/i.test(text)) return text;
+    const aria = (typeof el.getAttribute === 'function' ? (el.getAttribute('aria-label') || '') : '').trim();
+    const cleanedAria = aria.replace(/^(?:选择模型|select model)\s*[:：-]?\s*/i, '').trim();
+    const normalizedAria = stripModelHintBadges(cleanedAria.replace(/^,\s*current\s*[:：-]?\s*/i, '').trim());
+    return /^\d+\s+models?\s+selected$/i.test(normalizedAria) ? '' : normalizedAria;
+  }
+
+  function extractPaneModelHint(targetBox, modelEl, allowSideFallback = true) {
+    const el = modelEl || targetBox?.querySelector?.('[data-testid="model-selector-trigger"],button[aria-label*="选择模型"],button[aria-label*="Select model"]');
+    if (el) {
+      const triggerHint = readModelTriggerHint(el);
+      if (triggerHint) return triggerHint;
+    }
+
+    // 优先从当前窗格 React Fiber cascadeContext.state.selectedModel 直读真实会话模型（覆盖 Subagent / Best-of-N / /btw 等无模型按钮场景）
+    if (targetBox) {
+      const ctx = getReactCascadeContext(targetBox);
+      const fiberModel = ctx?.state?.selectedModel;
+      if (fiberModel) {
+        const rawFiberHint = typeof fiberModel === 'string'
+          ? fiberModel
+          : (fiberModel.label || fiberModel.modelId || fiberModel.value || fiberModel.modelOrAlias?.model || '');
+        const cleanedFiberHint = stripModelHintBadges(String(rawFiberHint || '').trim());
+        if (cleanedFiberHint && !/^\d+\s+models?\s+selected$/i.test(cleanedFiberHint)) {
+          return cleanedFiberHint;
+        }
+      }
+    }
+
+    // 无模型选择器按钮（如 /btw 侧边栏、subagentView 侧边栏或 Subagent 全屏视图）时，向主会话活跃窗格的模型按钮借用分母预览
+    if (allowSideFallback && targetBox) {
+      for (const inst of paneInstances.values()) {
+        if (!inst?.box?.isConnected || inst.box === targetBox) continue;
+        if (isAuxSubpaneComposer(inst.box)) continue;
+        const hint = inst.lastModelHint || extractPaneModelHint(inst.box, inst.model, false);
+        if (hint) return hint;
+      }
+      if (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') {
+        const triggers = Array.from(document.querySelectorAll('[data-testid="model-selector-trigger"],button[aria-label*="选择模型"],button[aria-label*="Select model"]'));
+        for (const btn of triggers) {
+          if (!isVisible(btn)) continue;
+          const testId = btn.getAttribute?.('data-testid') || '';
+          const ariaLabel = btn.getAttribute?.('aria-label') || '';
+          if (testId.includes('permission') || ariaLabel.includes('权限')) continue;
+          const ownerBox = btn.closest?.('[data-testid="agent-input-box"]') || btn;
+          if (ownerBox === targetBox || isAuxSubpaneComposer(ownerBox)) continue;
+          const hint = readModelTriggerHint(btn);
+          if (hint) return hint;
+        }
+      }
+    }
+    return '';
+  }
+
+  const formatTokens = (n) => ((Number(n) || 0) / 1000).toFixed(1) + 'K';
+
+  function getSideQuestionInheritPreviewSnapshot(box, model) {
+    const sq = getSideQuestionScope(box);
+    if (!sq?.isDraft) return null;
+    const parentCid = getSideQuestionParentCascadeId(box);
+    if (!parentCid) return null;
+    const parentSnap = getCachedSnapshot(parentCid);
+    if (!parentSnap || !parentSnap.ready || !(parentSnap.used > 0)) return null;
+
+    const modelHint = (box || model) ? extractPaneModelHint(box, model) : '';
+    const triggerEl = model || box?.querySelector?.('[data-testid="model-selector-trigger"],button[aria-label*="选择模型"],button[aria-label*="Select model"]') || null;
+    const limit = (modelHint || triggerEl) ? inferClientModelLimit(modelHint, triggerEl) : (parentSnap.limit || DRAFT_SNAPSHOT.limit);
+    const used = parentSnap.used;
+    const ratio = limit > 0 ? used / limit : 0;
+    const pct = (ratio * 100).toFixed(1) + '%';
+    const usedK = formatTokens(used);
+    const limitK = formatTokens(limit);
+    const isOverLimit = ratio >= 1.0;
+    let statusSuffix = '';
+    if (isOverLimit) {
+      statusSuffix = ' 已达截断阈值';
+    } else if (ratio >= 0.90) {
+      statusSuffix = ' 接近截断';
+    }
+
+    return {
+      ready: true,
+      source: 'side-question-inherit-preview',
+      ratio,
+      percent: pct,
+      used,
+      usedK,
+      limit,
+      limitK,
+      isOverLimit,
+      compressionDetected: !!parentSnap.compressionDetected,
+      compressionSaved: parentSnap.compressionSaved || 0,
+      tooltip: `将继承主会话 · ${pct} · ${usedK} / ${limitK}${statusSuffix}`,
+      isDraft: false
+    };
+  }
+
+  function getDraftSnapshot(box, model) {
+    const inheritPreview = getSideQuestionInheritPreviewSnapshot(box, model);
+    if (inheritPreview) {
+      return inheritPreview;
+    }
+    const modelHint = (box || model) ? extractPaneModelHint(box, model) : '';
+    const triggerEl = model || box?.querySelector?.('[data-testid="model-selector-trigger"],button[aria-label*="选择模型"],button[aria-label*="Select model"]') || null;
+    const limit = (modelHint || triggerEl) ? inferClientModelLimit(modelHint, triggerEl) : DRAFT_SNAPSHOT.limit;
+    if (limit === DRAFT_SNAPSHOT.limit) {
+      return DRAFT_SNAPSHOT;
+    }
+    const limitK = (limit / 1000).toFixed(1) + 'K';
+    return {
+      ready: true,
+      ratio: 0,
+      percent: '0.0%',
+      used: 0,
+      usedK: '0.0K',
+      limit: limit,
+      limitK: limitK,
+      tooltip: `新会话 · 0.0K / ${limitK} 上下文未占用`,
+      isDraft: true,
+    };
   }
 
   function getUnresolvedSnapshot() {
@@ -477,6 +794,178 @@ function installAgContextRingWidget() {
   const isVisible = (el) => {
     return el && el.isConnected && !el.closest('[hidden],[inert]') && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
   };
+
+  // 检测输入框是否处于侧边 /btw (sideQuestionView) 容器内，优先按 side-question DOM 标记判定草稿与独立子会话 ID（严格排除 subagentView）
+  function getSideQuestionScope(targetBox) {
+    const box = targetBox || (typeof document !== 'undefined' ? document.querySelector?.('[data-testid="agent-input-box"]') : null);
+    if (!box) return null;
+    const sideMarker = (typeof box.closest === 'function'
+      ? box.closest('[data-testid="side-question-tab-content"], [data-testid="side-question-tab-composer"], [data-side-panel-composer]')
+      : null) || (box.hasAttribute?.('data-side-panel-composer') ? box : null);
+    if (!sideMarker) return null;
+
+    // 关键守卫：右侧 subagentView（含 Swarm Worker 标签页）同样带有 [data-side-panel-composer]，
+    // 但其兄弟节点为 [data-testid="subagent-tab-conversation"]，绝不能误判为 /btw 草稿态！
+    const subpaneRoot = box.closest?.('[data-media-drop-scope="subpane"]') || sideMarker.parentElement || null;
+    if (subpaneRoot?.querySelector?.('[data-testid="subagent-tab-conversation"]')) {
+      return null;
+    }
+
+    const isExplicitSideQuestion = Boolean(
+      box.closest?.('[data-testid="side-question-tab-content"], [data-testid="side-question-tab-composer"]') ||
+      sideMarker.matches?.('[data-testid="side-question-tab-content"], [data-testid="side-question-tab-composer"]')
+    );
+
+    const contentRoot =
+      box.closest?.('[data-testid="side-question-tab-content"]') ||
+      sideMarker.closest?.('[data-testid="side-question-tab-content"]') ||
+      (isExplicitSideQuestion && typeof document !== 'undefined' ? document.querySelector?.('[data-testid="side-question-tab-content"]') : null) ||
+      subpaneRoot ||
+      sideMarker;
+
+    const convEl = contentRoot?.querySelector?.('[data-testid="side-question-tab-conversation"]') || null;
+    const emptyEl = contentRoot?.querySelector?.('[data-testid="side-question-tab-empty"]') || null;
+    if (!isExplicitSideQuestion && !convEl && !emptyEl) {
+      return null;
+    }
+
+    const rawId = convEl?.getAttribute?.('data-cascade-id') || '';
+    const cascadeId = GUID.test(rawId) ? rawId.toLowerCase() : null;
+    const emptyVisible = emptyEl
+      ? (typeof emptyEl.getClientRects === 'function'
+        ? isVisible(emptyEl)
+        : (emptyEl.isConnected !== false && !emptyEl.closest?.('[hidden],[inert]')))
+      : false;
+    const isDraft = Boolean(emptyVisible || !cascadeId);
+
+    return {
+      isSideQuestion: true,
+      contentRoot,
+      convEl,
+      emptyEl,
+      cascadeId,
+      isDraft,
+    };
+  }
+
+  // 统一识别右侧辅助子窗格（涵盖 /btw sideQuestionView 与子代理/Worker subagentView）
+  function isAuxSubpaneComposer(targetBox) {
+    if (!targetBox) return false;
+    if (getSideQuestionScope(targetBox)) return true;
+    if (typeof targetBox.closest === 'function') {
+      if (targetBox.closest('[data-media-drop-scope="subpane"], [data-side-panel-composer], [data-testid="subagent-tab-conversation"]')) {
+        return true;
+      }
+    }
+    if (targetBox.hasAttribute?.('data-side-panel-composer')) return true;
+    return false;
+  }
+
+  // 统计活跃的主聊天窗格数量（排除右侧 /btw 与 subagentView 辅助子窗格，避免开启辅助栏时干扰单主窗格 URL 回退逻辑）
+  function getMainConversationPaneCount(fallbackTotal = 1) {
+    let hasSideQuestionPane = false;
+    let mainCount = 0;
+    for (const inst of paneInstances.values()) {
+      if (!inst?.box?.isConnected) continue;
+      if (isAuxSubpaneComposer(inst.box)) {
+        hasSideQuestionPane = true;
+      } else {
+        mainCount++;
+      }
+    }
+    if (!hasSideQuestionPane && fallbackTotal > mainCount) {
+      try {
+        const allComposers = findAllComposers();
+        if (allComposers.length > 0) {
+          let domMainCount = 0;
+          let domHasAux = false;
+          for (const c of allComposers) {
+            if (isAuxSubpaneComposer(c.box)) domHasAux = true;
+            else domMainCount++;
+          }
+          if (domHasAux) {
+            return domMainCount > 0 ? domMainCount : 1;
+          }
+          return Math.max(domMainCount, 1);
+        }
+      } catch {}
+    }
+    if (hasSideQuestionPane) {
+      return mainCount > 0 ? mainCount : 1;
+    }
+    return Math.max(mainCount, fallbackTotal || 1);
+  }
+
+  function getSideQuestionParentCascadeId(targetBox) {
+    const box = targetBox || (typeof document !== 'undefined' ? document.querySelector?.('[data-testid="agent-input-box"]') : null);
+    if (!box) return null;
+
+    // 1. 优先从 targetBox 向上遍历 React Fiber，读取 memoizedProps.parentCascadeId 或 memoizedProps.sideQuestionOwnerId
+    try {
+      const fiberKey = Object.keys(box).find(k => k.startsWith('__reactFiber'));
+      if (fiberKey) {
+        let curr = box[fiberKey];
+        let depth = 0;
+        while (curr && depth < 35) {
+          depth++;
+          const props = curr.memoizedProps;
+          const rawOwnerId = props?.parentCascadeId || props?.sideQuestionOwnerId;
+          if (typeof rawOwnerId === 'string' && GUID.test(rawOwnerId)) {
+            return rawOwnerId.toLowerCase();
+          }
+          curr = curr.return;
+        }
+      }
+    } catch {}
+
+    // 2. 其次读取 getReactCascadeContext(targetBox)?.state?.agentStateProvider?.getState?.()?.conversationId
+    try {
+      const ctx = getReactCascadeContext(box);
+      const cid = ctx?.state?.agentStateProvider?.getState?.()?.conversationId;
+      if (typeof cid === 'string' && GUID.test(cid)) {
+        return cid.toLowerCase();
+      }
+    } catch {}
+
+    // 3. 若 Fiber 尚未就绪且 getMainConversationPaneCount() === 1，回退获取唯一主窗格的 extractRawConversationId
+    const totalPanes = paneInstances.size || 1;
+    if (getMainConversationPaneCount(totalPanes) === 1) {
+      const mainBoxes = [];
+      for (const inst of paneInstances.values()) {
+        if (inst?.box?.isConnected && !isAuxSubpaneComposer(inst.box)) {
+          mainBoxes.push(inst.box);
+        }
+      }
+      if (mainBoxes.length === 0) {
+        try {
+          for (const c of findAllComposers()) {
+            if (c?.box?.isConnected && !isAuxSubpaneComposer(c.box)) {
+              mainBoxes.push(c.box);
+            }
+          }
+        } catch {}
+      }
+      if (mainBoxes.length === 1) {
+        return extractRawConversationId(mainBoxes[0], totalPanes);
+      }
+    }
+
+    return null;
+  }
+
+  // 当主会话快照更新缓存后，0ms 同步刷新依赖它的草稿态 /btw 继承预览（0 额外 RPC）
+  function refreshSideQuestionDraftPreviews(parentCid) {
+    if (!parentCid) return;
+    const targetParent = parentCid.toLowerCase();
+    for (const inst of paneInstances.values()) {
+      if (!inst?.box?.isConnected) continue;
+      const sq = getSideQuestionScope(inst.box);
+      if (!sq?.isDraft) continue;
+      if (getSideQuestionParentCascadeId(inst.box) === targetParent) {
+        updatePaneView(inst, getDraftSnapshot(inst.box, inst.model));
+      }
+    }
+  }
 
   function getReactCascadeContext(targetBox) {
     const box = targetBox || document.querySelector('[data-testid="agent-input-box"]');
@@ -537,6 +1026,13 @@ function installAgContextRingWidget() {
   // 纯净直读指定分屏输入框所处的原始会话 ID（优先从该分屏自身 React 状态机与 DOM 树直读，杜绝分屏 URL 串台）
   function extractRawConversationId(targetBox, totalPaneCount = paneInstances.size || 1) {
     const box = targetBox || document.querySelector('[data-testid="agent-input-box"]');
+    // 侧边 /btw (`sideQuestionView`) 防串台优先守卫：
+    // 草稿态下外层 <X5> Fiber 会注入父会话 conversationId，必须先于 Fiber 按 side-question DOM 标记拦截。
+    const sq = getSideQuestionScope(box);
+    if (sq) {
+      return sq.isDraft ? null : sq.cascadeId;
+    }
+
     const ctx = getReactCascadeContext(box);
     const provider = ctx?.state?.agentStateProvider;
     let hasFiberState = false;
@@ -572,13 +1068,20 @@ function installAgContextRingWidget() {
         const id = readId(scope);
         if (id) return id;
       }
+      // 兼容右侧 subagentView：其 [data-testid="subagent-tab-conversation"][data-cascade-id] 为 [data-side-panel-composer] 的同级兄弟节点
+      const subagentConv = scope.querySelector?.('[data-testid="subagent-tab-conversation"][data-cascade-id]');
+      if (subagentConv) {
+        const id = readId(subagentConv);
+        if (id) return id;
+      }
       scope = scope.parentElement;
     }
 
-    // 分屏防串台铁律：当页面存在多个分屏、URL 含 %2B/+ 多会话拼接、或该分屏 Fiber 已明确返回无 conversationId 时，
-    // 绝不回退读取全局 location.pathname，防止新建草稿分屏误偷另一侧分屏的会话 ID！
+    // 分屏防串台铁律：当页面存在多个主分屏、当前输入框为右侧辅助子窗格、URL 含 %2B/+ 多会话拼接、或该分屏 Fiber 已明确返回无 conversationId 时，
+    // 绝不回退读取全局 location.pathname，防止新建草稿分屏或子代理侧边栏误偷另一侧主分屏的会话 ID！
+    const mainPaneCount = getMainConversationPaneCount(totalPaneCount);
     const pathname = (typeof location !== 'undefined' && location?.pathname) ? location.pathname : '';
-    if (totalPaneCount > 1 || hasFiberState || pathname.includes('%2B') || pathname.includes('%2b') || pathname.includes('+')) {
+    if (mainPaneCount > 1 || isAuxSubpaneComposer(box) || hasFiberState || pathname.includes('%2B') || pathname.includes('%2b') || pathname.includes('+')) {
       return null;
     }
 
@@ -589,9 +1092,19 @@ function installAgContextRingWidget() {
   // 严格判断指定分屏输入框所处的会话视图是否是尚未发送任何消息的纯草稿态
   function isDraftView(targetBox, totalPaneCount = paneInstances.size || 1) {
     const box = targetBox || document.querySelector('[data-testid="agent-input-box"]');
+    const sq = getSideQuestionScope(box);
+    if (sq) {
+      return sq.isDraft;
+    }
     const rawCid = extractRawConversationId(box, totalPaneCount);
     // 关键守卫：若该分屏会话已识别出有效会话 ID，绝对不是草稿态！
     if (rawCid) {
+      return false;
+    }
+
+    // 子代理侧边视图（subagentView）承载已创建的子代理/Worker 会话，绝不视为新建草稿态
+    const subpaneScope = box?.closest?.('[data-media-drop-scope="subpane"]') || box?.parentElement?.parentElement || null;
+    if (subpaneScope?.querySelector?.('[data-testid="subagent-tab-conversation"]')) {
       return false;
     }
 
@@ -622,15 +1135,15 @@ function installAgContextRingWidget() {
     // 降级兜底：基于该分屏自身 DOM 视图的细粒度判定
     if (!box?.isConnected) return false;
 
-    const welcomeTextRe = /今天有什么|我们可以一起完成|what can (we|I) (help|accomplish|do)|开始新会话|准备好提问/i;
-    const welcomeSelector = '[data-testid*="starter"],[data-testid*="empty"],[data-testid*="welcome"],[data-testid*="suggested"],[data-testid*="greeting"],[data-testid*="hero"],[data-testid*="banner"]';
+    const welcomeTextRe = /今天有什么|我们可以一起完成|what can (we|I) (help|accomplish|do)|what should we build|where should we pick up|what's next|开始新会话|准备好提问/i;
+    const welcomeSelector = '[data-testid="home-greeting"],[data-testid*="starter"],[data-testid*="empty"],[data-testid*="welcome"],[data-testid*="suggested"],[data-testid*="greeting"],[data-testid*="hero"],[data-testid*="banner"]';
     const realTurnSelector = '[data-testid="user-input-step"],[data-testid="agent-turn"],[data-testid="turn-card"],[data-testid="step-item"]';
 
     let view = box.closest?.('[data-testid="conversation-view"]');
     if (!view) {
       let p = box.parentElement;
       while (p && p !== document.body) {
-        if (p.matches?.('[data-testid*="conversation"], [data-testid*="chat"], [data-testid*="welcome"], [data-testid*="starter"], [data-testid*="empty"]')) {
+        if (p.matches?.('[data-testid*="conversation"], [data-testid*="chat"], [data-testid*="welcome"], [data-testid*="starter"], [data-testid*="empty"], [data-tiling-pane], .agy-home')) {
           view = p;
           break;
         }
@@ -744,7 +1257,8 @@ function installAgContextRingWidget() {
         if (state && (state.conversationId?.toLowerCase() === cid.toLowerCase())) {
           const steps = state.trajectorySlice?.totalStepsLength || (Array.isArray(state.turns) ? state.turns.length : 0);
           if (steps > 0) {
-            const limit = inferClientModelLimit(extractPaneModelHint(targetBox, modelEl));
+            const triggerEl = modelEl || targetBox?.querySelector?.('[data-testid="model-selector-trigger"],button[aria-label*="选择模型"],button[aria-label*="Select model"]') || null;
+            const limit = inferClientModelLimit(extractPaneModelHint(targetBox, modelEl), triggerEl);
             const limitK = (limit / 1000).toFixed(1) + 'K';
             const estTokens = Math.min(Math.round(steps * 1200), limit);
             const estRatio = Math.max(0.04, Math.min(estTokens / limit, 0.98));
@@ -768,7 +1282,7 @@ function installAgContextRingWidget() {
     return null;
   }
 
-  // 扫描页面上所有可见的分屏输入框与模型选择器组合（按 box 去重，全分屏对等返回）
+  // 扫描页面上所有可见的分屏输入框与模型选择器组合（按 box 去重，全分屏对等返回；支持无模型选择器的 /btw 等子窗格）
   function findAllComposers() {
     const editors = Array.from(document.querySelectorAll('[role="combobox"][contenteditable="true"],[role="textbox"][contenteditable="true"],[aria-label="Message input"]')).filter(isVisible);
     const models = Array.from(document.querySelectorAll('[data-testid="model-selector-trigger"],button[aria-label*="选择模型"],button[aria-label*="Select model"]')).filter(isVisible);
@@ -791,6 +1305,15 @@ function installAgContextRingWidget() {
         break;
       }
     }
+
+    // 兜底扫描：兼容 hideModelSelector=true（无模型选择器按钮，如 /btw 侧边栏或 Subagent）的可见输入框
+    for (const editor of editors) {
+      const box = editor.closest?.('[data-testid="agent-input-box"]') ||
+        editor.closest?.('[data-testid="side-question-tab-composer"], [data-side-panel-composer]');
+      if (!box || box.isConnected === false || seenBoxes.has(box)) continue;
+      seenBoxes.add(box);
+      results.push({ box, editor, model: null });
+    }
     return results;
   }
 
@@ -802,6 +1325,7 @@ function installAgContextRingWidget() {
 
     if (!force && currentData &&
         currentData.ready === data.ready &&
+        currentData.source === data.source &&
         currentData.ratio === data.ratio &&
         currentData.used === data.used &&
         currentData.limit === data.limit &&
@@ -876,6 +1400,8 @@ function installAgContextRingWidget() {
     let tip = data.tooltip;
     if (data.isDraft) {
       tip = `新会话 · 0.0K / ${data.limitK || '256.0K'} 上下文未占用`;
+    } else if (data.source === 'side-question-inherit-preview') {
+      tip = data.tooltip || `将继承主会话 · ${(ratio * 100).toFixed(1)}% · ${data.usedK || '0.0K'} / ${data.limitK || '256.0K'}`;
     } else if (data.source === 'fiber-estimate' || (typeof tip === 'string' && tip.includes('(正在校准...)'))) {
       // 前端 Fiber 快速估算过渡态保持原校准提示，不误报为正式截断告警
       tip = tip || `约 ${data.usedK || '0.0K'} / ${data.limitK || '256.0K'} 上下文 (正在校准...)`;
@@ -896,7 +1422,8 @@ function installAgContextRingWidget() {
       } else if (data.isTruncated && !data.isWindowed) {
         tip = `${baseInfo} 会话数据不完整`;
       } else if (data.isUnknownModel) {
-        tip = `${baseInfo} 未知模型限制 默认256K`;
+        const defaultTag = data.limit && data.limit !== 256000 ? `默认${limitStr}` : '默认256K';
+        tip = `${baseInfo} 未知模型限制 ${defaultTag}`;
       } else if (!tip) {
         tip = `${baseInfo} 上下文已使用`;
       }
@@ -937,7 +1464,7 @@ function installAgContextRingWidget() {
     if (isDraftView(inst.box, totalPanes)) {
       inst.lastConversationId = null;
       inst.consecutiveFailures = 0;
-      updatePaneView(inst, getDraftSnapshot());
+      updatePaneView(inst, getDraftSnapshot(inst.box, inst.model));
       scheduleNextPaneSync(inst, 5000);
       return;
     }
@@ -999,6 +1526,7 @@ function installAgContextRingWidget() {
 
       if (data && data.ready && !isCidMismatch) {
         setCachedSnapshot(cid, data);
+        refreshSideQuestionDraftPreviews(cid);
       }
 
       // 架构解耦 2：分屏独立 UI 更新控制
@@ -1089,19 +1617,29 @@ function installAgContextRingWidget() {
   }
 
   function mountOrUpdatePane(comp, totalPanes) {
-    if (!comp || !comp.box || !comp.model) return null;
+    if (!comp || !comp.box) return null;
     try {
-      const { box, editor, model } = comp;
+      const { box, editor, model = null } = comp;
       // 容器探测防越界：若 model 自身带 flex-1，closest('.flex-1') 会匹配到自身；必须从 parentElement 开始向上找且限制在 box 内部，杜绝误匹配最外层 box 容器
-      const candidateContainer = model.parentElement?.closest?.('.flex-1');
-      const flexContainer = (candidateContainer && candidateContainer !== box && box?.contains(candidateContainer))
-        ? candidateContainer
-        : (model.parentElement || box);
+      const candidateContainer = model ? model.parentElement?.closest?.('.flex-1') : null;
+      const flexContainer = model
+        ? ((candidateContainer && candidateContainer !== box && box?.contains?.(candidateContainer))
+          ? candidateContainer
+          : (model.parentElement || box))
+        : null;
 
-    let modelBranch = model;
-    while (modelBranch && modelBranch.parentElement && modelBranch.parentElement !== flexContainer && modelBranch.parentElement !== box && modelBranch.parentElement !== (typeof document !== 'undefined' ? document.body : null)) {
-      modelBranch = modelBranch.parentElement;
-    }
+      let modelBranch = model;
+      while (modelBranch && modelBranch.parentElement && modelBranch.parentElement !== flexContainer && modelBranch.parentElement !== box && modelBranch.parentElement !== (typeof document !== 'undefined' ? document.body : null)) {
+        modelBranch = modelBranch.parentElement;
+      }
+
+      // 当 hideModelSelector=true 无模型按钮时（如 /btw 侧边栏），查找底部工具栏左侧容器或发送按钮作为降级挂载锚点
+      const footerLeft = !model
+        ? (box.querySelector?.('.agy-composer-footer .flex-1') || box.querySelector?.('.agy-composer-footer') || null)
+        : null;
+      const sendBtn = !model
+        ? (box.querySelector?.('[data-testid="send-button"], [data-testid="send-button-loading"], [data-testid="send-button-pending"]') || null)
+        : null;
 
     let inst = paneInstances.get(box);
     let modelHintChanged = false;
@@ -1111,11 +1649,31 @@ function installAgContextRingWidget() {
       const currentModelHint = extractPaneModelHint(box, model);
       modelHintChanged = currentModelHint !== inst.lastModelHint;
       inst.lastModelHint = currentModelHint;
-      // 短路守卫：若该分屏圆环节点已挂载且紧邻模型选择器右侧，仅确保监听存活，跳过 DOM 重建
-      if (inst.node && inst.node.isConnected && (flexContainer?.contains(inst.node) || box?.contains(inst.node)) && (inst.node.previousElementSibling === modelBranch || inst.node.previousElementSibling === model)) {
+      // 短路守卫：若该分屏圆环节点已挂载在预期锚点，仅确保监听存活，跳过 DOM 重建
+      const isAnchored = model
+        ? Boolean(
+            inst.node &&
+            inst.node.isConnected &&
+            (flexContainer?.contains(inst.node) || box?.contains(inst.node)) &&
+            (inst.node.previousElementSibling === modelBranch || inst.node.previousElementSibling === model)
+          )
+        : Boolean(
+            inst.node &&
+            inst.node.isConnected &&
+            box?.contains?.(inst.node) &&
+            (!footerLeft || typeof footerLeft.contains !== 'function' || footerLeft.contains(inst.node))
+          );
+      if (isAnchored) {
         bindPaneAgentStateListener(inst);
         if (modelHintChanged) {
-          syncPaneState(inst);
+          if (isDraftView(box, totalPanes)) {
+            inst.lastConversationId = null;
+            inst.consecutiveFailures = 0;
+            updatePaneView(inst, getDraftSnapshot(box, model));
+            scheduleNextPaneSync(inst, 5000);
+          } else {
+            syncPaneState(inst);
+          }
         }
         return inst;
       }
@@ -1293,7 +1851,7 @@ function installAgContextRingWidget() {
     if (isDraftView(box, totalPanes)) {
       inst.lastConversationId = null;
       inst.currentData = null;
-      updatePaneView(inst, getDraftSnapshot(), true);
+      updatePaneView(inst, getDraftSnapshot(box, model), true);
     } else {
       const cid = getActiveConversationId(box, totalPanes);
       if (!cid) {
@@ -1322,10 +1880,20 @@ function installAgContextRingWidget() {
     }
 
     try {
-      if (flexContainer && modelBranch && modelBranch.parentElement === flexContainer) {
+      if (model && flexContainer && modelBranch && modelBranch.parentElement === flexContainer) {
         flexContainer.insertBefore(node, modelBranch.nextSibling);
-      } else if (model.parentElement) {
+      } else if (model && model.parentElement) {
         model.parentElement.insertBefore(node, model.nextSibling);
+      } else if (footerLeft) {
+        if (sendBtn && sendBtn.parentElement === footerLeft && typeof footerLeft.insertBefore === 'function') {
+          footerLeft.insertBefore(node, sendBtn);
+        } else if (typeof footerLeft.appendChild === 'function') {
+          footerLeft.appendChild(node);
+        }
+      } else if (sendBtn && sendBtn.parentElement && box?.contains?.(sendBtn)) {
+        sendBtn.parentElement.insertBefore(node, sendBtn);
+      } else if (typeof box.appendChild === 'function') {
+        box.appendChild(node);
       }
     } catch {}
 
@@ -1381,7 +1949,8 @@ function installAgContextRingWidget() {
   const handleGlobalFocusIn = (e) => {
     const target = e.target;
     if (!target) return;
-    const targetBox = target.closest?.('[data-testid="agent-input-box"]');
+    const targetBox = target.closest?.('[data-testid="agent-input-box"]') ||
+      target.closest?.('[data-testid="side-question-tab-composer"], [data-side-panel-composer]');
     if (targetBox) {
       if (!paneInstances.has(targetBox)) {
         mount();
@@ -1447,5 +2016,8 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports.shouldAcceptSnapshot = __agRingCacheModule.shouldAcceptSnapshot;
   module.exports.sanitizeLRUIndex = __agRingCacheModule.sanitizeLRUIndex;
   module.exports.inferClientModelLimit = __agRingCacheModule.inferClientModelLimit;
+  module.exports.updateClientModelLimits = __agRingCacheModule.updateClientModelLimits;
+  module.exports.clearClientModelLimits = __agRingCacheModule.clearClientModelLimits;
+  module.exports.normalizeClientModelKey = __agRingCacheModule.normalizeClientModelKey;
   module.exports.getRingColor = __agRingCacheModule.getRingColor;
 }

@@ -5,20 +5,20 @@ Antigravity Context Ring is a developer tooling extension engineered for Google 
 
 ## System Architecture
 1. Daemon Layer (Sidecar Node.js Process, ~18MB):
-   - ls-discovery: Discovers local Language Server port and CSRF authentication token via process table inspection.
+   - ls-discovery: Discovers local Language Server port and CSRF authentication token via host-injected environment variables fast-path and process table inspection.
    - rpc-client: Communicates via Connect-RPC to retrieve conversation checkpoints and modelUsage snapshots across multi-step agent trajectories.
-   - context-calculator: Maps consumed tokens to model-specific and host-enforced limits (256K auto-compaction boundary).
-   - runtime-bridge: Injects and orchestrates the frontend widget through Chrome DevTools Protocol (CDP).
+   - context-calculator & context-service: Maps consumed tokens to live Language Server model_profiles & AICode Mendel limits — 256K (256,000) online baseline for Gemini 4 Hydrogen (offline static 512K, dynamically overridden via tail-cursor GetCascadeTrajectoryGeneratorMetadata), Gemini 4 Argon, Orchestrator (Argon), Gemini 4 Carbon, Gemini 3.8 Flash, Claude Opus 5.5, and Claude Sonnet 5.5 (with live experiment calibration such as claude-1m_840k); 160K Legacy M26/M35 & Claude 4; 128K Gemini 2.5; 80K (80,000) GPT-OSS 120B. Recognizes Orchestrator (Argon) Plan-Execute dual-model pairing (M668 <-> M669) and zero-USER_INPUT Swarm/Subagent trajectories (SYSTEM_MESSAGE estimation + checkpoint re-anchoring), while syncing dynamic limits and aliases from GetCascadeTrajectoryGeneratorMetadata + GetUserStatus / GetCascadeModelConfigData into snapshots.
+   - runtime-bridge: Filters non-app CDP targets (data:, about:blank, plugin:), injects the widget through Chrome DevTools Protocol (CDP), and triggers instant re-injection on Runtime.executionContextCreated.
 
 2. Frontend Microkernel (ring-widget.cjs):
    - Rendered using native SVG inside an isolated Shadow DOM container.
-   - Direct React Fiber binding via agentStateProvider ensures zero cross-talk between split panes.
-   - Dual-tier SWR caching (50 in-memory LRU + 100 LocalStorage entries) enables 0ms session switching without flickering or zero-reset.
+   - Scope-isolated React Fiber binding covers Split View composers, split new-pane drafts, /btw (sideQuestionView), and right-side Subagent / Swarm Worker tabs (subagentView), reading Fiber selectedModel directly in hideModelSelector and Best-of-N views with zero cross-talk.
+   - Dual-tier SWR caching (50 in-memory LRU + 100 LocalStorage entries) enables 0ms session switching without flickering or zero-reset, paired with self-learned model limit persistence in localStorage (plus data-context-window attribute fallback) for zero-maintenance draft and cold-start calibration.
 
 ## Technical Comparison Matrix
 - Native Host UI: Minimalist design, context telemetry hidden, auto-compaction triggers automatically.
 - Heuristic Character Estimation: Fast, but inaccurate for codebases and incapable of distinguishing cache read tokens from new input tokens.
-- Context Ring (RPC Telemetry): True physical tokens from modelUsage, explicit 256K truncation warning, zero file modifications to app.asar.
+- Context Ring (RPC Telemetry): True physical tokens from modelUsage, multi-tier truncation warnings (256K / 160K / 128K / 80K + closed-loop self-learning maxContextTokens sync), multi-agent & auxiliary-pane isolation, zero file modifications to app.asar.
 
 ## Supported Environments
 - OS: Windows, macOS, Linux

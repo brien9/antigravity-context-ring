@@ -7,6 +7,8 @@ import {
   setBackendTrajectoryCache,
   getSessionLsBinding,
   setSessionLsBinding,
+  projectStep,
+  clearDynamicModelCatalog,
   _getMemoryCacheInfo,
   _getTrajectoryCacheInfo
 } from '../sidecars/ring/context-service.mjs';
@@ -1073,6 +1075,341 @@ test('【宿主退出防重复扫描】RPC 抛出致命异常或 initialLs 探�
     _discoverAllLanguageServers: async () => []
   });
   assert.equal(getSessionLsBinding(testCid), null, 'initialLs 失败后 sessionLsBinding 必须被清空');
+});
+
+test('【尾游标动态校准】GetCascadeTrajectoryGeneratorMetadata 按 metadataIndex 校准 maxContextTokens 并命中缓存减少 RPC', async () => {
+  const testCid = 'mock-cascade-runtime-gm-calibration';
+  let metaRpcCalls = 0;
+  let lastMetaParams = null;
+  let runtimeMaxTokens = 512_000;
+  let stepList = [
+    {
+      stepIndex: 0,
+      type: StepType.USER_INPUT,
+      userInput: { userResponse: 'hi', userConfig: { plannerConfig: { planModel: 'MODEL_PLACEHOLDER_M525' } } }
+    },
+    {
+      stepIndex: 1,
+      type: StepType.PLANNER_RESPONSE,
+      metadata: {
+        sourceTrajectoryStepInfo: { metadataIndex: 134 },
+        modelUsage: {
+          model: 'MODEL_PLACEHOLDER_M525',
+          inputTokens: 128_000,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0
+        }
+      },
+      plannerResponse: { response: 'ok' }
+    }
+  ];
+
+  async function mockRpc(_target, method, params) {
+    if (method === 'GetCascadeTrajectorySteps') {
+      const start = params.startIndex || 0;
+      const end = params.endIndex || 1000;
+      return { steps: stepList.slice(start, end) };
+    }
+    if (method === 'GetCascadeTrajectoryGeneratorMetadata') {
+      metaRpcCalls++;
+      lastMetaParams = params;
+      return {
+        generatorMetadata: [
+          {
+            chatModel: {
+              model: 'MODEL_PLACEHOLDER_M525',
+              chatStartMetadata: {
+                contextWindowMetadata: {
+                  maxContextTokens: String(runtimeMaxTokens)
+                }
+              }
+            }
+          }
+        ]
+      };
+    }
+    return {};
+  }
+
+  // 1. 冷启动全量拉取：发起 1 次尾游标 RPC（offset=134, includeMessages=false），限额校准为 512K
+  const snap1 = await getContextSnapshot(testCid, true, { _ls: { port: 9999 }, _rpcCall: mockRpc });
+  assert.equal(metaRpcCalls, 1, '存在 sourceTrajectoryStepInfo.metadataIndex 时应调 1 次尾游标 RPC');
+  assert.deepEqual(lastMetaParams, {
+    cascadeId: testCid,
+    generatorMetadataOffset: 134,
+    includeMessages: false
+  });
+  assert.equal(snap1.limit, 512_000, '分母必须被运行时 maxContextTokens (512000) 覆盖');
+  assert.equal(snap1.ratio, 0.25);
+
+  // 2. 增量轮询：新增一个不含 metadataIndex 的 CHECKPOINT 步，尾游标仍为 134，直接命中缓存（0 额外 GM RPC）
+  stepList.push({
+    stepIndex: 2,
+    type: StepType.CHECKPOINT,
+    metadata: {
+      modelUsage: {
+        model: 'MODEL_PLACEHOLDER_M525',
+        inputTokens: 256_000,
+        outputTokens: 0
+      }
+    }
+  });
+  const snap2 = await getContextSnapshot(testCid, true, { _ls: { port: 9999 }, _rpcCall: mockRpc });
+  assert.equal(metaRpcCalls, 1, 'metadataIndex 未推进时不得重复发起 GetCascadeTrajectoryGeneratorMetadata RPC');
+  assert.equal(snap2.limit, 512_000, '增量缓存中的 runtimeMeta 必须持续生效');
+  assert.equal(snap2.ratio, 0.5);
+
+  // 3. 尾游标推进至 135 且远端策略改为 256K：重新拉取并立即生效
+  runtimeMaxTokens = 256_000;
+  stepList.push({
+    stepIndex: 3,
+    type: StepType.PLANNER_RESPONSE,
+    metadata: {
+      sourceTrajectoryStepInfo: { metadataIndex: 135 },
+      modelUsage: {
+        model: 'MODEL_PLACEHOLDER_M525',
+        inputTokens: 256_000,
+        outputTokens: 0
+      }
+    },
+    plannerResponse: { response: 'next' }
+  });
+  const snap3 = await getContextSnapshot(testCid, true, { _ls: { port: 9999 }, _rpcCall: mockRpc });
+  assert.equal(metaRpcCalls, 2, 'metadataIndex 推进至 135 时应发起第 2 次尾游标 RPC');
+  assert.equal(lastMetaParams.generatorMetadataOffset, 135);
+  assert.equal(snap3.limit, 256_000, '分母应立即校准为远端最新下发的 256K');
+  assert.equal(snap3.ratio, 1);
+});
+
+test('【Swarm Worker 投影与增量】projectStep 保留 systemMessage 字段并支持 0 USER_INPUT 会话全量与增量校准', async () => {
+  const rawSystemStep = {
+    stepIndex: 0,
+    type: StepType.SYSTEM_MESSAGE,
+    metadata: { createdAt: '2026-11-14T12:00:00Z' },
+    systemMessage: {
+      message: 'You have just started. Your assignment is recorded on the board.',
+      hugeUnusedPayload: 'x'.repeat(10000),
+    },
+  };
+  const projected = projectStep(rawSystemStep);
+  assert.deepEqual(
+    projected.systemMessage,
+    { message: 'You have just started. Your assignment is recorded on the board.' },
+    'projectStep 必须保留 systemMessage.message 并剥离无关大载荷'
+  );
+
+  const testCid = 'mock-swarm-worker-session';
+  const workerSteps = [
+    rawSystemStep,
+  ];
+
+  async function mockRpc(_target, method, params) {
+    if (method === 'GetCascadeTrajectorySteps') {
+      const start = params.startIndex || 0;
+      const end = params.endIndex || 1000;
+      return { steps: workerSteps.slice(start, end) };
+    }
+    return {};
+  }
+
+  // 1. 首轮仅有 SYSTEM_MESSAGE：估算值包含 systemMessage.message 文本，且不被清空
+  const snap1 = await getContextSnapshot(testCid, true, {
+    _ls: { port: 9999 },
+    _rpcCall: mockRpc,
+    selectedModel: 'GPT-OSS 120B (Medium)', // 前端借用自 80K 主窗格
+  });
+  assert.equal(snap1.ready, true);
+  assert.equal(snap1.isEstimated, true);
+  assert.ok(snap1.used > 10_000, '瘦身投影后仍需保留 systemMessage 文本参与首轮估算');
+
+  // 2. 增量追加 Worker 的首个 PLANNER_RESPONSE 权威快照 (MODEL_PLACEHOLDER_M418, 256K)
+  workerSteps.push({
+    stepIndex: 1,
+    type: StepType.PLANNER_RESPONSE,
+    metadata: {
+      createdAt: '2026-11-14T12:00:05Z',
+      modelUsage: {
+        model: 'MODEL_PLACEHOLDER_M418',
+        inputTokens: 64_000,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+      }
+    },
+    plannerResponse: { response: 'Task finished.' }
+  });
+
+  const snap2 = await getContextSnapshot(testCid, true, {
+    _ls: { port: 9999 },
+    _rpcCall: mockRpc,
+    selectedModel: 'GPT-OSS 120B (Medium)',
+  });
+  assert.equal(snap2.selectedModel, 'MODEL_PLACEHOLDER_M418', '增量合并后权威快照必须纠正外部借用的 80K 模型');
+  assert.equal(snap2.limit, 256_000, '分母必须更新为 M418 的 256K');
+  assert.equal(snap2.ratio, 0.25);
+});
+
+test('【动态限额自学习闭环】GeneratorMetadata 与 GetUserStatus 自动学习模型限额并通过 formatContextResult.modelLimits 下发', async () => {
+  clearDynamicModelCatalog();
+  const testCid1 = 'mock-dynamic-learn-gm';
+  const gmSteps = [
+    {
+      stepIndex: 0,
+      type: StepType.PLANNER_RESPONSE,
+      metadata: {
+        sourceTrajectoryStepInfo: { metadataIndex: 10 },
+        modelUsage: {
+          model: 'MODEL_PLACEHOLDER_M402',
+          inputTokens: 210_000,
+          outputTokens: 0,
+        }
+      },
+      plannerResponse: { response: 'ok' }
+    }
+  ];
+
+  async function mockGmRpc(_target, method) {
+    if (method === 'GetCascadeTrajectorySteps') {
+      return { steps: gmSteps };
+    }
+    if (method === 'GetCascadeTrajectoryGeneratorMetadata') {
+      return {
+        generatorMetadata: [
+          {
+            plannerConfig: {
+              planModel: 'MODEL_PLACEHOLDER_M402',
+              modelName: 'claude-opus-5-5-high',
+            },
+            chatModel: {
+              model: 'MODEL_PLACEHOLDER_M402',
+              modelDisplayName: 'Claude Opus 5.5 (High)',
+              responseModel: 'claude-opus-5-5-2026',
+              chatStartMetadata: {
+                contextWindowMetadata: {
+                  maxContextTokens: '840000'
+                }
+              }
+            }
+          }
+        ]
+      };
+    }
+    return {};
+  }
+
+  // 1. 尾游标 GM 返回 840000（如 claude-1m_840k 实验开启）：自动学习并随 snap1.modelLimits 下发
+  const snap1 = await getContextSnapshot(testCid1, true, { _ls: { port: 9999 }, _rpcCall: mockGmRpc });
+  assert.equal(snap1.limit, 840_000);
+  assert.equal(snap1.modelLimits['MODEL_PLACEHOLDER_M402'], 840_000);
+  assert.equal(snap1.modelLimits['claude-opus-5-5-high'], 840_000);
+  assert.equal(snap1.modelLimits['claude-opus-5.5-high'], 840_000);
+  assert.equal(snap1.modelLimits['claude-opus-5-5-2026'], 840_000);
+
+  // 2. 新建未编目模型会话（名称含关键词 "Gemini 5 Ultra"，isUnknownModel 为 false 但未在静态表编目）：
+  //    自动触发 1 次 GetUserStatus 同步远端限额 512000，且二次轮询命中目录 0 次额外 GetUserStatus RPC
+  let userStatusCalls = 0;
+  const testCid2 = 'mock-dynamic-learn-user-status';
+  const uncatalogedSteps = [
+    {
+      stepIndex: 0,
+      type: StepType.USER_INPUT,
+      userInput: {
+        userResponse: 'hello',
+        userConfig: { plannerConfig: { planModel: 'Gemini 5 Ultra' } }
+      }
+    }
+  ];
+
+  async function mockUserStatusRpc(_target, method) {
+    if (method === 'GetCascadeTrajectorySteps') {
+      return { steps: uncatalogedSteps };
+    }
+    if (method === 'GetUserStatus') {
+      userStatusCalls++;
+      return {
+        userStatus: {
+          cascadeModelConfigData: {
+            clientModelConfigs: [
+              {
+                modelId: 'gemini-5-ultra',
+                label: 'Gemini 5 Ultra · 1M',
+                modelOrAlias: { model: 'MODEL_PLACEHOLDER_M888' },
+                maxContextTokens: 512_000,
+              }
+            ]
+          }
+        }
+      };
+    }
+    return {};
+  }
+
+  const snap2 = await getContextSnapshot(testCid2, true, { _ls: { port: 9999 }, _rpcCall: mockUserStatusRpc });
+  assert.equal(userStatusCalls, 1, '未编目的新关键词模型应触发 1 次 GetUserStatus 懒同步');
+  assert.equal(snap2.limit, 512_000, '应自动应用 GetUserStatus 返回的 512K 限额');
+  assert.equal(snap2.modelLimits['gemini-5-ultra'], 512_000);
+  assert.equal(snap2.modelLimits['MODEL_PLACEHOLDER_M888'], 512_000);
+
+  const snap3 = await getContextSnapshot(testCid2, true, { _ls: { port: 9999 }, _rpcCall: mockUserStatusRpc });
+  assert.equal(userStatusCalls, 1, '已编目进动态目录后不得再次请求 GetUserStatus');
+  assert.equal(snap3.limit, 512_000);
+});
+
+test('【备选 LS 10s 冷却重扫与死胡同 15 防护】缓存无备选时允许冷却重扫 discoverAll(true)，10s 内或同请求已重扫时绝不二次扫盘', async () => {
+  const lsPrimary = { port: 7101, csrfToken: 'tok1' };
+  const lsNewlySpawned = { port: 7102, csrfToken: 'tok2' };
+  const discoverHistory = [];
+
+  const mockDiscoverAll = async (force) => {
+    discoverHistory.push(Boolean(force));
+    // 非强制只返回旧缓存 [lsPrimary]，强制重扫发现新进程 [lsPrimary, lsNewlySpawned]
+    return force ? [lsPrimary, lsNewlySpawned] : [lsPrimary];
+  };
+
+  const mockRpc = async (target) => {
+    const ls = target?.current || target;
+    if (ls.port === 7101) {
+      const err = new Error('Not found on primary');
+      err.statusCode = 404;
+      throw err;
+    }
+    if (ls.port === 7102) {
+      return {
+        steps: [
+          {
+            stepIndex: 0,
+            type: StepType.CHECKPOINT,
+            metadata: { modelUsage: { model: 'MODEL_PLACEHOLDER_M418', inputTokens: 32_000, outputTokens: 0 } }
+          }
+        ]
+      };
+    }
+    return {};
+  };
+
+  // 1. 首次遇到 404 且 discoverAll(false) 过滤后无备选：触发 1 次 discoverAll(true) 找到 7102 并自愈
+  const snap1 = await getContextSnapshot('cid-on-new-ls', true, {
+    _ls: lsPrimary,
+    _discoverAllLanguageServers: mockDiscoverAll,
+    _rpcCall: mockRpc,
+  });
+  assert.equal(snap1.ready, true);
+  assert.equal(snap1.used, 32_000);
+  assert.deepEqual(discoverHistory, [false, true], '首次无备选时应先读缓存 (false) 再触发 1 次强制重扫 (true)');
+
+  // 2. 10s 冷却期内另一个不存在的会话触发 404 且缓存无备选：严禁在冷却期内重复触发 discoverAll(true)
+  discoverHistory.length = 0;
+  const snap2 = await getContextSnapshot('cid-missing-during-cooldown', true, {
+    _ls: lsPrimary,
+    _discoverAllLanguageServers: async (force) => {
+      discoverHistory.push(Boolean(force));
+      return [lsPrimary];
+    },
+    _rpcCall: mockRpc,
+  });
+  assert.equal(snap2.ready, false);
+  assert.deepEqual(discoverHistory, [false], '10s 冷却期内必须仅调用 discoverAll(false)，严禁重复拉起强制扫盘');
 });
 
 

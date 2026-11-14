@@ -389,6 +389,47 @@ function findWorkingPort(ports, csrfToken, timeoutMs = 1500) {
 }
 
 /**
+ * 解析 Antigravity 官方 Sidecar 运行时注入的环境变量直连参数
+ * (ANTIGRAVITY_LS_ADDRESS + ANTIGRAVITY_CSRF_TOKEN)
+ */
+export function parseEnvLanguageServer(env = process.env) {
+  if (!env || typeof env !== 'object') return null;
+  const rawAddr = typeof env.ANTIGRAVITY_LS_ADDRESS === 'string' ? env.ANTIGRAVITY_LS_ADDRESS.trim() : '';
+  const rawToken = typeof env.ANTIGRAVITY_CSRF_TOKEN === 'string' ? env.ANTIGRAVITY_CSRF_TOKEN.trim() : '';
+  if (!rawAddr || !rawToken) return null;
+
+  const portMatch = rawAddr.match(/:(\d+)(?:\/.*)?$/);
+  if (!portMatch) return null;
+  const port = parseInt(portMatch[1], 10);
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return null;
+
+  const explicitPid = parseInt(String(env.ANTIGRAVITY_LS_PID || ''), 10);
+  const pid = (Number.isInteger(explicitPid) && explicitPid > 0) ? explicitPid : (Number(process.ppid) || 0);
+
+  return {
+    pid,
+    port,
+    csrfToken: rawToken
+  };
+}
+
+/**
+ * 探活环境变量注入的 Language Server 地址（零子进程开销，<3ms 极速直连）
+ */
+export async function probeEnvLanguageServer(env = process.env, timeoutMs = 400) {
+  const parsed = parseEnvLanguageServer(env);
+  if (!parsed) return null;
+  const working = await findWorkingPort([parsed.port], parsed.csrfToken, timeoutMs);
+  if (!working) return null;
+  return {
+    pid: parsed.pid,
+    port: working.port,
+    csrfToken: parsed.csrfToken,
+    useTls: working.useTls
+  };
+}
+
+/**
  * 发现当前运行中的所有存活且响应正常的 Antigravity 语言服务器（按优先级排序，首选排在第 0 位）
  * @param {boolean} [forceRefresh=false]
  * @returns {Promise<Array<Object>>}
@@ -439,6 +480,19 @@ export async function discoverLanguageServer(forceRefresh = false) {
         cachedAllLsList = [diskCache];
         lastDiscoveryTime = Date.now();
         isDiskRestoredSingle = true;
+        return cachedLsInfo;
+      }
+    }
+
+    // 环境变量极速直连通道（当无可用磁盘缓存或宿主重启后旧端口已死时，优先探活官方注入的 ANTIGRAVITY_LS_ADDRESS）
+    if (!process.env.AGY_TEST_TARGET_DIR) {
+      const envLs = await probeEnvLanguageServer(process.env, 350);
+      if (envLs) {
+        cachedLsInfo = envLs;
+        cachedAllLsList = [envLs];
+        lastDiscoveryTime = Date.now();
+        isDiskRestoredSingle = true;
+        writeDiskCache(envLs);
         return cachedLsInfo;
       }
     }
@@ -549,6 +603,16 @@ async function _performDiscovery(forceRefresh = false) {
             csrfToken: cand.csrfToken,
             useTls: working.useTls
           });
+        }
+      }
+    }
+
+    if (!process.env.AGY_TEST_TARGET_DIR) {
+      const envParsed = parseEnvLanguageServer(process.env);
+      if (envParsed && !workingServers.some(s => s.port === envParsed.port)) {
+        const envWorking = await probeEnvLanguageServer(process.env, 400);
+        if (envWorking) {
+          workingServers.unshift(envWorking);
         }
       }
     }

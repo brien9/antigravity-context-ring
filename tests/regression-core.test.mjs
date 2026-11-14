@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { CdpConnection, RuntimeBridgeManager } from '../sidecars/ring/runtime-bridge.mjs';
 import { processTrajectorySteps, StepType, normalizeModelId, COMPRESSION_MIN_DROP_TOKENS, COMPRESSION_MIN_DROP_RATIO } from '../sidecars/ring/context-calculator.mjs';
-import { getPlatformTruncationLimit, isKnownModel } from '../sidecars/ring/model-limits.mjs';
-import { formatContextResult } from '../sidecars/ring/context-service.mjs';
+import { getPlatformTruncationLimit, isKnownModel, normalizeModelLookupKey } from '../sidecars/ring/model-limits.mjs';
+import { formatContextResult, resolveDynamicModelState, clearDynamicModelCatalog, _getMemoryCacheInfo } from '../sidecars/ring/context-service.mjs';
 import installAgContextRingWidget from '../assets/ring-widget.cjs';
 import { readFileSync } from 'node:fs';
 
@@ -1187,7 +1187,7 @@ test('【回归 15】会话识别失败不得伪装成新草稿 0%', () => {
   assert.match(widgetSource, /return isCompressed \? '#a78bfa' : 'var\(--ring-bar\)';/, 'getRingColor 常规低位态必须返回 var(--ring-bar)');
   // 4. 草稿态轮询去 force 并对齐 tooltip 命中 diff 守卫
   assert.match(widgetSource, /tooltip:\s*'新会话 · 0\.0K \/ 256\.0K 上下文未占用'/s, 'DRAFT_SNAPSHOT tooltip 必须对齐');
-  assert.match(widgetSource, /if \(isDraftView\(inst\.box, totalPanes\)\) \{\s*inst\.lastConversationId = null;\s*inst\.consecutiveFailures = 0;\s*updatePaneView\(inst, getDraftSnapshot\(\)\);\s*scheduleNextPaneSync\(inst, 5000\);/s, '草稿态轮询去 force 并保留 currentData');
+  assert.match(widgetSource, /if \(isDraftView\(inst\.box, totalPanes\)\) \{\s*inst\.lastConversationId = null;\s*inst\.consecutiveFailures = 0;\s*updatePaneView\(inst, getDraftSnapshot\([^)]*\)\);\s*scheduleNextPaneSync\(inst, 5000\);/s, '草稿态轮询去 force 并保留 currentData');
 });
 
 test('【回归 16】PowerShell 配置更新必须兼容已存在的空插件对象 {}', () => {
@@ -1234,4 +1234,197 @@ test('【回归 18】冷会话/过渡态 Fiber 预估离线稳态: RPC 失败时
     widgetSource.includes('!inst.currentData.isPending') && widgetSource.includes('!inst.currentData.isDraft'),
     '有效 inst.currentData 必须排除 pending 与 draft 态'
   );
+});
+
+test('【回归 19】前后端模型截断阈值双向对齐: Hydrogen(256K线上基线) / GPT-OSS(80K) / Argon&Carbon&Claude5.5(256K) / Legacy(160K/128K)', () => {
+  const cases = [
+    // Gemini 4 Hydrogen (线上 AICode Mendel 实际截断基线 256K)
+    { id: 'MODEL_PLACEHOLDER_M525', limit: 256_000 },
+    { id: 'MODEL_PLACEHOLDER_M526', limit: 256_000 },
+    { id: 'MODEL_PLACEHOLDER_M527', limit: 256_000 },
+    { id: 'MODEL_PLACEHOLDER_M528', limit: 256_000 },
+    { id: 'MODEL_PLACEHOLDER_M432', limit: 256_000 },
+    { id: 'MODEL_PLACEHOLDER_M433', limit: 256_000 },
+    { id: 'MODEL_PLACEHOLDER_M434', limit: 256_000 },
+    { id: 'gemini-4-hydrogen', limit: 256_000 },
+    { id: 'gemini-4-hydrogen-high', limit: 256_000 },
+    { id: 'gemini-4-hydrogen-medium', limit: 256_000 },
+    { id: 'gemini-4-hydrogen-low', limit: 256_000 },
+    { id: 'gemini-4-hydrogen-xhigh', limit: 256_000 },
+    { id: 'Gemini 4 Hydrogen (Medium) 新', limit: 256_000 },
+    { id: 'Gemini 4 Hydrogen (XHigh) (New)', limit: 256_000 },
+    // Orchestrator (Argon) (256K)
+    { id: 'MODEL_PLACEHOLDER_M667', limit: 256_000 },
+    { id: 'MODEL_PLACEHOLDER_M668', limit: 256_000 },
+    { id: 'gemini-pro-orchestrator-g1-pro', limit: 256_000 },
+    { id: 'Orchestrator (Argon)', limit: 256_000 },
+    // Gemini 4 Carbon (256K)
+    { id: 'MODEL_PLACEHOLDER_M670', limit: 256_000 },
+    { id: 'gemini-4-carbon-disabled', limit: 256_000 },
+    { id: 'gemini-4-carbon-low', limit: 256_000 },
+    { id: 'gemini-4-carbon-medium', limit: 256_000 },
+    { id: 'gemini-4-carbon-high', limit: 256_000 },
+    { id: 'Gemini 4 Carbon (High) 注意', limit: 256_000 },
+    // Claude Opus/Sonnet 5.5 (256K)
+    { id: 'claude-opus-5-5-max', limit: 256_000 },
+    { id: 'claude-opus-5.5-max', limit: 256_000 },
+    { id: 'Claude Opus 5.5 (Max)', limit: 256_000 },
+    { id: 'Claude Sonnet 5.5 (High)', limit: 256_000 },
+    // GPT-OSS 120B (80K)
+    { id: 'MODEL_OPENAI_GPT_OSS_120B_MEDIUM', limit: 80_000 },
+    { id: 'gpt-oss-120b-medium', limit: 80_000 },
+    { id: 'GPT-OSS 120B (Medium) 注意', limit: 80_000 },
+    // Legacy M26/M35 (160K)
+    { id: 'MODEL_PLACEHOLDER_M26', limit: 160_000 },
+    { id: 'MODEL_PLACEHOLDER_M35', limit: 160_000 },
+    // Gemini 2.5 & M50/M18/M148/M198 (128K)
+    { id: 'MODEL_GOOGLE_GEMINI_2_5_FLASH', limit: 128_000 },
+    { id: 'MODEL_GOOGLE_GEMINI_2_5_PRO', limit: 128_000 },
+    { id: 'gemini-2.5-flash', limit: 128_000 },
+    { id: 'gemini-2.5-pro', limit: 128_000 },
+    { id: 'MODEL_PLACEHOLDER_M50', limit: 128_000 },
+    { id: 'MODEL_PLACEHOLDER_M18', limit: 128_000 },
+    { id: 'MODEL_PLACEHOLDER_M148', limit: 128_000 },
+    { id: 'MODEL_PLACEHOLDER_M198', limit: 128_000 },
+  ];
+
+  for (const item of cases) {
+    assert.equal(getPlatformTruncationLimit(item.id), item.limit, `后端 getPlatformTruncationLimit(${item.id}) 应返回 ${item.limit}`);
+    assert.equal(inferClientModelLimit(item.id), item.limit, `前端 inferClientModelLimit(${item.id}) 应返回 ${item.limit}`);
+  }
+
+  // 防边界数字前缀/后缀误命中（例如 M5250 不得命中 Hydrogen，M180 不得命中 M18 的 128K，M260 不得命中 M26 的 160K）
+  assert.equal(inferClientModelLimit('MODEL_PLACEHOLDER_M5250'), 256_000, 'M5250 不得误匹配 M525');
+  assert.equal(inferClientModelLimit('MODEL_PLACEHOLDER_M180'), 256_000, 'M180 不得误匹配 M18 (128K)');
+  assert.equal(inferClientModelLimit('MODEL_PLACEHOLDER_M260'), 256_000, 'M260 不得误匹配 M26 (160K)');
+  assert.equal(normalizeModelLookupKey('Gemini 4 Hydrogen (Medium) 新'), 'gemini-4-hydrogen-medium');
+  assert.equal(normalizeModelLookupKey('GPT-OSS 120B (Medium) 注意'), 'gpt-oss-120b-medium');
+});
+
+test('【回归 20】resolveDynamicModelState: GetUserStatus 懒同步、动态别名限额重算、TTL 缓存与异常兜底', async () => {
+  _getMemoryCacheInfo().clear();
+  clearDynamicModelCatalog();
+
+  try {
+    // 1. 已知模型直接跳过，0 次额外 RPC
+    let rpcCalls = 0;
+    const knownCalc = {
+      ready: true,
+      model: 'MODEL_PLACEHOLDER_M526',
+      isUnknownModel: false,
+      contextUsed: 100_000,
+      contextLimit: 256_000,
+      usageRatio: 100_000 / 256_000,
+      isOverLimit: false,
+    };
+    await resolveDynamicModelState(knownCalc, { port: 1 }, async () => {
+      rpcCalls++;
+      return {};
+    });
+    assert.equal(rpcCalls, 0, '已知模型不得发起 GetUserStatus RPC');
+
+    // 2. 未知模型首次触发 GetUserStatus 懒同步：一方面将别名解析为 M26 (160K) 并重算；
+    //    另一方面若携带同族 runtimeMaxContextTokens（如 512K），消除告警的同时不得用静态表反向冲掉运行态限额
+    const unknownAliasCalc = {
+      ready: true,
+      model: 'MODEL_PLACEHOLDER_M999',
+      selectedModel: 'MODEL_PLACEHOLDER_M999',
+      isUnknownModel: true,
+      contextUsed: 180_000,
+      contextLimit: 256_000,
+      usageRatio: 180_000 / 256_000,
+      isOverLimit: false,
+    };
+    await resolveDynamicModelState(unknownAliasCalc, { port: 1 }, async (_ls, method) => {
+      rpcCalls++;
+      assert.equal(method, 'GetUserStatus');
+      return {
+        userStatus: {
+          cascadeModelConfigData: {
+            clientModelConfigs: [
+              {
+                modelId: 'MODEL_PLACEHOLDER_M999',
+                label: 'Future Model Preview 新',
+                modelOrAlias: { model: 'MODEL_PLACEHOLDER_M26' },
+              },
+              {
+                modelId: 'MODEL_PLACEHOLDER_M998',
+                label: 'Future Compact Alpha 注意',
+                modelOrAlias: { model: 'MODEL_OPENAI_GPT_OSS_120B_MEDIUM' },
+              },
+            ],
+          },
+        },
+      };
+    });
+    assert.equal(rpcCalls, 1, '首次遇到未知模型应调一次 GetUserStatus');
+    assert.equal(unknownAliasCalc.isUnknownModel, false, '同步后应消除 isUnknownModel');
+    assert.equal(unknownAliasCalc.contextLimit, 160_000, '动态别名映射到 M26 后应重算 contextLimit 为 160K');
+    assert.equal(unknownAliasCalc.usageRatio, 1, '180K >= 160K 时 usageRatio 必须钳位至 1');
+    assert.equal(unknownAliasCalc.isOverLimit, true, '180K >= 160K 时 isOverLimit 必须重算为 true');
+
+    // 3. TTL 内命中已缓存动态目录的另一个别名 (label 带徽章)，0 次额外 RPC 且正确重算为 80K
+    const cachedOssLabel = {
+      ready: true,
+      model: 'Future Compact Alpha 注意',
+      isUnknownModel: true,
+      contextUsed: 82_000,
+      contextLimit: 256_000,
+      usageRatio: 82_000 / 256_000,
+      isOverLimit: false,
+    };
+    await resolveDynamicModelState(cachedOssLabel, { port: 1 }, async () => {
+      rpcCalls++;
+      return {};
+    });
+    assert.equal(rpcCalls, 1, '命中已缓存动态目录不得再次发起 GetUserStatus RPC');
+    assert.equal(cachedOssLabel.isUnknownModel, false);
+    assert.equal(cachedOssLabel.contextLimit, 80_000, '动态目录别名应将限额重算为 80K');
+    assert.equal(cachedOssLabel.usageRatio, 1, '82K >= 80K 时 usageRatio 必须钳位至 1');
+    assert.equal(cachedOssLabel.isOverLimit, true, '82K >= 80K 时 isOverLimit 必须重算为 true');
+
+    // 4. TTL 缓存有效期内遇到目录外的新未知模型，同样不重复冲刷 GetUserStatus
+    const uncatalogedModel = {
+      ready: true,
+      model: 'totally-unlisted-model-x',
+      isUnknownModel: true,
+      contextUsed: 10_000,
+      contextLimit: 256_000,
+      usageRatio: 10_000 / 256_000,
+      isOverLimit: false,
+    };
+    await resolveDynamicModelState(uncatalogedModel, { port: 1 }, async () => {
+      rpcCalls++;
+      return {};
+    });
+    assert.equal(rpcCalls, 1, 'TTL 有效期内不应重复请求 GetUserStatus');
+    assert.equal(uncatalogedModel.isUnknownModel, true, '未在动态目录中的未知模型保持 isUnknownModel=true');
+
+    // 5. 清空缓存后 RPC 抛错静默兜底，且 formatContextResult 对非 256K 未知模型正确显示默认标签
+    clearDynamicModelCatalog();
+    const errorFallbackCalc = {
+      ready: true,
+      model: 'totally-unlisted-model-x',
+      isUnknownModel: true,
+      contextUsed: 20_000,
+      contextLimit: 80_000,
+      usageRatio: 20_000 / 80_000,
+      isOverLimit: false,
+    };
+    await resolveDynamicModelState(errorFallbackCalc, { port: 1 }, async () => {
+      rpcCalls++;
+      throw new Error('LS timeout');
+    });
+    assert.equal(rpcCalls, 2, '清空缓存后允许重新探查一次 GetUserStatus');
+    assert.equal(errorFallbackCalc.isUnknownModel, true, 'RPC 异常时静默保留原状态');
+    assert.equal(errorFallbackCalc.contextLimit, 80_000);
+
+    const formattedCustomUnknown = formatContextResult(errorFallbackCalc);
+    assert.match(formattedCustomUnknown.tooltip, /未知模型限制 默认80\.0K/, '非 256K 未知模型 tooltip 必须展示实际默认阈值');
+    const formattedDefaultUnknown = formatContextResult({ ...errorFallbackCalc, contextLimit: 256_000, usageRatio: 20_000 / 256_000 });
+    assert.match(formattedDefaultUnknown.tooltip, /未知模型限制 默认256K/, '256K 未知模型 tooltip 必须展示默认256K');
+  } finally {
+    clearDynamicModelCatalog();
+    _getMemoryCacheInfo().clear();
+  }
 });

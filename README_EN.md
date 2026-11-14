@@ -49,16 +49,16 @@ sh ./install.sh            # macOS / Linux
 
 ## 💡 Why Context Ring?
 
-Foundation models natively support ~1M context, but the Antigravity client hard-caps truncation at **256K** and forces lossy compaction at that point. The native UI never shows remaining context and never warns before it happens.
+Foundation models natively support ~1M context, but the Antigravity client enforces per-model & remote-experiment truncation thresholds (**256K** online baseline for most active models including Gemini 4 Hydrogen [with runtime dynamic calibration], **160K / 128K** legacy, **80K** for GPT-OSS 120B) and forces lossy compaction at those cutoffs. The native UI never shows remaining context and never warns before it happens.
 
 **Context Ring** turns that real cutoff into a 19px inline ring:
 
 | Dimension | Native Host UI | Heuristic Scripts / Approx | Antigravity Context Ring |
 | :--- | :--- | :--- | :--- |
-| **Denominator Baseline** | Silent auto-compaction at 256K | Often assumes 1M, missing actual limit | **Locked to 256K physical boundary** with visual alert |
+| **Denominator Baseline** | Silent auto-compaction at 80K / 128K / 160K / 256K | Often assumes 1M, missing actual limit | **Mapped to real multi-tier cutoffs + self-learning `maxContextTokens` sync** |
 | **Token Measurement** | Internal tracking; no live indicator | Character approximations, misses cache tokens | **Connect-RPC snapshots** from real `modelUsage` |
 | **UI Integration** | Clean, distraction-free | Detached floating window or CLI polling | **19px inline SVG ring** with frosted-glass HUD on hover |
-| **Multi-Pane Concurrency**| Native split panes | Susceptible to global route crosstalk | **React Fiber state tree isolation** per active pane |
+| **Multi-Pane Concurrency**| Native split panes | Susceptible to global route crosstalk | **React Fiber & scope isolation** across Split View, `/btw`, Subagents & Swarm |
 | **Host Footprint** | Official baseline | Some scripts patch `app.asar` | **CDP injection**, zero file changes, ~18MB RAM |
 
 ---
@@ -87,6 +87,7 @@ Engineered for power users with multi-composer parallel workflows. Each visible 
 
 * **Zero Cross-Talk Guarantee**: Each pane binds directly to its corresponding Fiber node without falling back to global route state, preventing draft boxes on the right from reflecting data from active sessions on the left.
 * **Same-Session Synchronization**: When two panes view the same conversation, token increments on either pane reflect instantaneously across both rings.
+* **Full-Pane & Auxiliary View Support**: Covers main Split View panes, split new-pane draft views, `/btw` side questions (`sideQuestionView`), and right-side auxiliary **Subagent / Swarm Worker** tabs (`subagentView`). Dedicated scope guards isolate Subagent / Swarm Worker panels from `/btw` drafts, read React Fiber `selectedModel` directly under `hideModelSelector` or Best-of-N views, and support zero-`USER_INPUT` message-driven trajectories.
 
 ---
 
@@ -101,17 +102,17 @@ flowchart TD
     end
 
     subgraph SidecarEngine["Context Ring Sidecar Daemon (~18MB)"]
-        Discovery["ls-discovery<br/>Port & CSRF Token Sniffing"]
+        Discovery["ls-discovery<br/>Env Fast-Path & Port/CSRF Sniffing"]
         Rpc["rpc-client<br/>Paginated Step Traversal & Deadlock Guard"]
-        Calc["context-calculator<br/>Three-Tier Model Decoupling & Limits"]
-        Bridge["runtime-bridge<br/>Non-Invasive CDP Injection & Locks"]
+        Calc["context-calculator<br/>Three-Tier Decoupling, Plan-Execute & Self-Learning"]
+        Bridge["runtime-bridge<br/>Target Filtering, CDP Injection & Reload Recovery"]
     end
 
     subgraph NativeWidget["Frontend Microkernel (ring-widget.cjs)"]
         ShadowRoot["Shadow DOM Style Isolation"]
         RingDOM["19px SVG Native Ring"]
         TooltipDOM["Frosted-Glass Capsule HUD"]
-        SWRMap["Dual-Tier Cache (50 LRU + 100 LocalStorage)"]
+        SWRMap["Dual-Tier SWR + Self-Learned Limits (LocalStorage)"]
         FiberObserver["Fiber Event Pipeline (onDidChange)"]
     end
 
@@ -128,9 +129,10 @@ flowchart TD
 ```
 
 * **Hardware-Grade RPC Ground Truth (Zero Character Guessing)**: Adhering to professional harness engineering standards, telemetry reads `modelUsage` structures directly from the local Language Server over Connect-RPC, capturing input, output, `cacheReadTokens`, and `cacheCreationTokens`.
-* **Three-Tier Model Decoupling Engine**: Decouples `selectedModel` (the UI-selected model that strictly dictates capacity denominator), `executionModel` (the subtask execution model), and `checkpointModel` (the snapshot model), preventing lightweight subagents (e.g. `flash_lite`) from distorting primary telemetry.
+* **Three-Tier Model Decoupling & Plan-Execute Pairing**: Decouples `selectedModel` (the primary model dictating capacity denominator), `executionModel` (the subtask execution model), and `checkpointModel` (the snapshot model). Beyond isolating lightweight subagents (`flash_lite`), it pairs `Orchestrator (Argon)` (`M668` in Plan mode ⇄ `M669` in Execution mode) within the same trajectory — preserving the primary denominator, allowing execution-step tail cursors to calibrate limits, and detecting cross-model `CHECKPOINT` compactions without false resets; zero-`USER_INPUT` Swarm Worker trajectories combine initial `SYSTEM_MESSAGE` estimation with checkpoint re-anchoring.
+* **Multi-Tier Cutoffs & Zero-Maintenance Self-Learning Loop**: Grounded in Language Server `model_profiles` and live `CHECKPOINT` telemetry — **256K (256,000)** online baseline for Gemini 4 Hydrogen (512K offline static, overridden to 256K by AICode Mendel), Gemini 4 Argon / Orchestrator (Argon) / Gemini 4 Carbon / Gemini 3.8 Flash / Claude Opus & Sonnet 5.5 (calibrating to experiment limits such as `claude-1m_840k` when active); **160K** for Legacy M26/M35 & Claude 4; **128K** for Gemini 2.5; and **80K (80,000)** for GPT-OSS 120B. Lightweight tail-cursor `GetCascadeTrajectoryGeneratorMetadata` RPCs and `GetUserStatus` / `GetCascadeModelConfigData` catalog sync feed learned limits and aliases into snapshots, which the frontend persists in `localStorage` so drafts and future models align automatically without code updates.
 * **Dual-Tier SWR & Never-Reset Guard**: 50-session in-memory LRU + 100-session persistent LocalStorage cache. Switching historical conversations renders valid snapshots in 0ms followed by silent background calibration. On host reloads or transient disconnects, the ring locks the latest verified state rather than blinking to zero.
-* **Authoritative Total + Tail Window**: Bypasses the 1,000-step ceiling of a single RPC query. For trajectories over 5,000 steps, it reads the authoritative `stepCount` and analyzes the newest 5,000-step window, so the current checkpoint is never hidden by an old prefix and the tooltip explicitly marks a long-session tail window.
+* **Authoritative Total, Tail Window & Self-Healing Bridge**: Bypasses the 1,000-step RPC ceiling by tracking `stepCount` and focusing the newest 5,000-step window so current checkpoints are never masked. On the host bridge side, non-app CDP targets (`data:`, `about:blank`, `plugin:`) are filtered out, `Runtime.executionContextCreated` triggers instant re-injection on reloads, and host-injected LS env vars enable `<3ms` zero-spawn discovery.
 
 ---
 
@@ -143,15 +145,21 @@ flowchart TD
 </details>
 
 <details>
-<summary><strong>Q2: When using concurrent subagents or Split View panes, how does Context Ring avoid token spikes and cross-pane pollution?</strong></summary>
+<summary><strong>Q2: When using Subagents / Swarm Workers, /btw side questions, or Split View panes, how does Context Ring avoid jumps and cross-pane pollution?</strong></summary>
 
-> **A**: Context Ring enforces **three-tier model decoupling** and **pane-isolated state trees** across frontend and backend. The denominator capacity is solely locked by the primary user-selected model (`selectedModel`), so subagents invoking lightweight helper models will never tamper with the main progress ratio. In the UI, each input container is managed independently (`Map<box, PaneRingInstance>`) and binds exclusively to its own React Fiber node, completely preventing cross-talk between split panes.
+> **A**: Context Ring enforces **three-tier model decoupling** and **scope-isolated pane state trees** across frontend and backend. The denominator is anchored to the primary model, with `Orchestrator (Argon)` Plan-Execute pairing (`M668` ⇄ `M669`) recognized natively so execution steps never hijack the denominator or drop compaction tracking. In the UI, `Map<box, PaneRingInstance>` separates main composers, `/btw` (`sideQuestionView`), and right-side Subagent / Swarm Worker tabs (`subagentView`), reading React Fiber `selectedModel` directly even when `hideModelSelector` hides the model button.
 </details>
 
 <details>
 <summary><strong>Q3: Does the background daemon affect Antigravity performance or consume significant memory?</strong></summary>
 
 > **A**: **Not at all**. The background Node.js sidecar daemon maintains an ultra-light footprint of approximately **~18MB of RAM** and near-**0% CPU** consumption. The frontend injection layer consists of lightweight native DOM and SVG elements with zero framework dependencies (no React/Vue overhead). Combined with a 250ms debounced event throttle and a host-bound watchdog that terminates automatically when the app closes, it introduces zero overhead to typing or client rendering.
+</details>
+
+<details>
+<summary><strong>Q4: Do I need to wait for a plugin update when Antigravity ships new models or adjusts remote context limits?</strong></summary>
+
+> **A**: **No manual update needed**. Whenever a model runs or appears in the host catalog, the backend learns its `maxContextTokens` and aliases via `GetCascadeTrajectoryGeneratorMetadata` and `GetUserStatus`, ships those learned limits inside snapshots, and the frontend persists them in `localStorage`. Draft views and cold restarts immediately reflect the updated limits.
 </details>
 
 ---

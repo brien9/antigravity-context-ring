@@ -47,7 +47,7 @@ if (Test-Path $configFile) {
 Write-Host "[2/3] Terminating running Sidecar daemon..." -ForegroundColor Yellow
 function Stop-SidecarProcesses {
     try {
-        Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue | Where-Object { 
+        Get-CimInstance Win32_Process -Filter "Name = 'node.exe' OR Name = 'Antigravity.exe'" -ErrorAction SilentlyContinue | Where-Object {
             $cmd = $_.CommandLine
             if ([string]::IsNullOrWhiteSpace($cmd)) { return $false }
             if (-not [string]::IsNullOrWhiteSpace($CustomTargetDir)) {

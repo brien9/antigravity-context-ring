@@ -49,16 +49,16 @@ sh ./install.sh            # macOS / Linux
 
 ## 💡 为什么需要它？ · Why Context Ring?
 
-底层模型原生的上下文是 1M 级别，但 Antigravity 客户端把截断阈值写死在 **256K**，到点强制触发有损压缩，而官方 UI 全程不显示余量、压缩前也不预警。
+底层模型原生的上下文多为 1M 级别，但 Antigravity 客户端按模型档案及远端策略执行分层物理截断（主流在役模型 **256K** / **Gemini 4 Hydrogen 256K** [运行时动态校准] / **GPT-OSS 120B 80K**），到点强制触发有损压缩，而官方 UI 全程不显示余量、压缩前也不预警。
 
 Context Ring 把这根真实的截断线做成一颗 19px 的行内圆环：
 
 | 核心维度 | 宿主原生默认 | 常见粗估方案 / 外部脚本 | Antigravity Context Ring |
 | :--- | :--- | :--- | :--- |
-| **截断分母基准** | 隐藏式管理，至 256K 自动触发压缩 | 多按 1M 或字符比估算，难反映实际截断线 | **锁定 256K 物理截断线**，在压缩前提供直观预警 |
+| **截断分母基准** | 隐藏式管理，按模型与远端策略达 80K / 128K / 160K / 256K 自动压缩 | 多按 1M 或字符比估算，难反映实际截断线 | **对齐真实多级截断线**（主流 & Hydrogen 256K / GPT-OSS 80K）+ **动态限额自学习** |
 | **Token 计量源** | 内部维持，界面未暴露实时读数 | 依赖字符估算，无法细分 Prompt Cache | **直读 Connect-RPC 快照**，解析真实 `modelUsage` |
 | **交互形态** | 极简无额外元素 | 独立小窗口或终端命令打印 | **19px 原生行内圆环**，悬停即看毛玻璃 HUD |
-| **多任务隔离** | 官方独立分屏 | 易受全局状态干扰，多屏时易混淆 | **React Fiber 节点绑定**，分屏状态互不串台 |
+| **多任务隔离** | 官方独立分屏 | 易受全局状态干扰，多屏时易混淆 | **React Fiber 与作用域隔离**，分屏 / `/btw` / Subagent / Swarm 互不串台 |
 | **宿主安全性** | 官方原生 | 部分需解包修改 `app.asar` | **CDP 管道注入**，不改动宿主文件，常驻 ~18MB |
 
 ---
@@ -87,6 +87,7 @@ Context Ring 把这根真实的截断线做成一颗 19px 的行内圆环：
 
 * **防串台铁律**：各分屏仅绑定自身 Fiber 节点，绝不回退读取全局路由，彻底杜绝“在右侧新建草稿却误偷左侧会话数据”的跨屏污染。
 * **同会话跨屏共振**：当两个分屏同时打开同一个历史会话时，任一侧产生 Token 推进，两侧圆环毫秒级同步刷新。
+* **全场景窗格与辅助视图适配**：全面覆盖主聊天分屏、分屏新建页、`/btw` 侧边提问，以及右侧辅助窗格中的 **Subagent / Swarm Worker** 对话标签页（`subagentView`）。通过独立作用域守卫避免将 Subagent / Swarm Worker 误判为 `/btw` 草稿态，在 `hideModelSelector` 无模型按钮或 Best-of-N 多选视图下直接读取 React Fiber `selectedModel`，并兼容 0 `USER_INPUT` 的消息驱动子代理轨迹。
 
 ---
 
@@ -101,17 +102,17 @@ flowchart TD
     end
 
     subgraph SidecarEngine["Context Ring 守护进程 (~18MB)"]
-        Discovery["ls-discovery<br/>端口与 CSRF 自动嗅探"]
+        Discovery["ls-discovery<br/>环境变量直通与端口/CSRF 嗅探"]
         Rpc["rpc-client<br/>万步循环分页与防死锁"]
-        Calc["context-calculator<br/>三层模型解耦与物理阈值映射"]
-        Bridge["runtime-bridge<br/>CDP 安全注入与调度锁"]
+        Calc["context-calculator<br/>三层解耦、Plan-Execute 协同与动态自学习"]
+        Bridge["runtime-bridge<br/>Target 过滤、CDP 安全注入与重载自愈"]
     end
 
     subgraph NativeWidget["前端微内核 (ring-widget.cjs)"]
         ShadowRoot["Shadow DOM 样式隔离"]
         RingDOM["19px SVG 原生圆环"]
         TooltipDOM["毛玻璃悬停胶囊 HUD"]
-        SWRMap["双阶缓存 (50 LRU + 100 LocalStorage)"]
+        SWRMap["双阶 SWR 缓存与限额自学习 (LocalStorage)"]
         FiberObserver["Fiber 事件管道 (onDidChange)"]
     end
 
@@ -128,9 +129,10 @@ flowchart TD
 ```
 
 * **纯硬件级 RPC 快照（零字符猜测）**：遵循成熟 Harness 规范，直接从底层 Language Server 提取 `modelUsage` 结构，完整纳入输入、输出、`cacheReadTokens` 与 `cacheCreationTokens`。
-* **三层模型解耦引擎**：严格区分 `selectedModel`（UI 主选模型，唯一决定分母）、`executionModel`（当前步骤执行模型）与 `checkpointModel`（快照落盘模型），根除 Subagent 临时调用轻量模型导致的进度条失真。
+* **三层模型解耦与 Plan-Execute 协同**：严格区分 `selectedModel`（UI 主选模型，唯一决定分母）、`executionModel`（当前步骤执行模型）与 `checkpointModel`（快照落盘模型）。既能根除普通 Subagent 临时调用轻量模型导致的进度条失真，也能精准识别 `Orchestrator (Argon)`（Plan `M668` ⇄ Execute 执行模型 `M669`）的同会话协同关系——锁住主分母不被执行模型篡改，同时允许执行步尾游标继续校准分母并准确捕获跨模型 `CHECKPOINT` 压缩；对 0 `USER_INPUT` 的 Swarm Worker 轨迹则结合 `SYSTEM_MESSAGE` 首轮估算与首个权威快照自动重锚定。
+* **多级物理阈值与免维护动态自学习闭环**：基于 Language Server `model_profiles` 与实机 `CHECKPOINT` 触发点锁定真实分母——**Gemini 4 Hydrogen / Gemini 4 Argon / Orchestrator (Argon) / Gemini 4 Carbon / Gemini 3.8 Flash / Claude Opus & Sonnet 5.5 256K (256,000)**（注：Hydrogen 离线静态为 512K、线上默认压在 256K，Claude 5.5 命中 `claude-1m_840k` 等实验分支时按实测上限校准）、**Legacy M26/M35 & Claude 4 160K**、**Gemini 2.5 128K**、**GPT-OSS 120B 80K (80,000)**。通过尾游标 RPC `GetCascadeTrajectoryGeneratorMetadata` 读取运行态 `maxContextTokens` 与 `GetUserStatus`（兼容 `GetCascadeModelConfigData`）动态同步模型目录，将学到的限额与别名随快照透传并持久化至前端 `localStorage`，让草稿态与新模型无需手动更新静态表即可全自动对齐。
 * **双阶 SWR 与 Never-Reset 防线**：内置 50 会话内存 LRU + 100 会话 LocalStorage 持久化快照。切换历史会话 0ms 渲染有效快照并后台静默校准；遇到窗口重载或 Language Server 偶发重启时，强制锁死最后一帧有效状态，绝不闪烁归零。
-* **权威总步数 + 尾部窗口**：突破单次 RPC 查询的 1000 步限制；超过 5000 步时读取权威 `stepCount` 并聚焦最新 5000 步，确保当前 Checkpoint 不被旧前缀遮蔽，同时在气泡中明确标注“长会话尾部”。
+* **权威总步数 + 尾部窗口与重载自愈**：突破单次 RPC 查询的 1000 步限制，超过 5000 步时读取权威 `stepCount` 并聚焦最新 5000 步，确保当前 Checkpoint 不被旧前缀遮蔽；同时精确过滤 `data:` / `about:blank` / `plugin:` 等非应用 CDP Target，监听 `Runtime.executionContextCreated` 实现重载 0ms 瞬时重注，并优先通过宿主环境变量实现零进程扫描直连。
 
 ---
 
@@ -143,15 +145,21 @@ flowchart TD
 </details>
 
 <details>
-<summary><strong>Q2: 多 Agent（Subagent）并发或多分屏（Split View）编码时，如何避免上下文进度条跳变与串台？</strong></summary>
+<summary><strong>Q2: 多 Agent（Subagent / Swarm）、/btw 侧边提问或多分屏编码时，如何避免进度条跳变与串台？</strong></summary>
 
-> **A**: Context Ring 在前后端双向落实了**模型三层解耦体系**与**分屏独立状态树**。分母容量严格且仅由 UI 主选模型（`selectedModel`）唯一锁定，子任务调用轻量模型（如 `flash_lite`）绝不会篡改主圆环分母；同时在前端建立 `Map<box, PaneRingInstance>`，每个分屏仅绑定自身 React Fiber 节点，绝不读取全局状态，彻底杜绝跨屏串台。
+> **A**: Context Ring 在前后端双向落实了**模型三层解耦**与**作用域隔离状态树**。分母容量严格由主选模型锁定，对 `Orchestrator (Argon)` 在 Plan（`M668`）与 Execution（`M669`）间双模型协同的场景也能锁死主分母并不断档追踪压缩；在前端，`Map<box, PaneRingInstance>` 严格区分主窗格、`/btw` 侧边提问（`sideQuestionView`）与右侧 Subagent / Swarm Worker 标签页（`subagentView`），在无模型按钮视图下通过 React Fiber `selectedModel` 直读模型提示，彻底杜绝串台与误判。
 </details>
 
 <details>
 <summary><strong>Q3: 守护进程常驻后台是否会影响 Antigravity 性能或消耗大量内存？</strong></summary>
 
 > **A**: **完全不会**。后端 Node.js 守护进程常驻内存仅约 **18MB**，CPU 占用接近 **0%**；前端注入层为纯原生 DOM + SVG 微内核（无 React/Vue 运行时开销），结合 250ms 智能防抖节流与宿主进程看门狗（宿主退出即自动协同退出），对编辑器渲染与打字输入零负担。
+</details>
+
+<details>
+<summary><strong>Q4: Antigravity 客户端频繁更新、上线新模型或调整远端实验上限时，需要手动等插件发版吗？</strong></summary>
+
+> **A**: **无需手动等待发版**。后端在运行态通过 `GetCascadeTrajectoryGeneratorMetadata` 捕获远端实际下发的 `maxContextTokens`，并按需结合 `GetUserStatus` 同步最新模型别名与目录，随即通过快照将动态限额字典透传给前端自学习并持久化到 `localStorage`。只要在客户端运行过一次，草稿态与跨重启冷启动即自动对齐最新上限。
 </details>
 
 ---

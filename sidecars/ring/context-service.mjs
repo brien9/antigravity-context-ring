@@ -1,10 +1,287 @@
 import { discoverLanguageServer, discoverAllLanguageServers } from './ls-discovery.mjs';
 import { rpcCall, isRetryableRpcError } from './rpc-client.mjs';
 import { processTrajectorySteps } from './context-calculator.mjs';
+import {
+  isKnownModel,
+  isCatalogedModel,
+  normalizeModelLookupKey,
+  getPlatformTruncationLimit,
+  isSameModelFamily,
+  isCompatibleRuntimeModel,
+  hasCustomLimitOverride,
+} from './model-limits.mjs';
 
 const memoryCache = new Map();
 const MEMORY_CACHE_TTL = 8000; // 8秒内存瞬时命中缓存，杜绝重复RPC冲刷
 const MAX_MEMORY_CACHE_SIZE = 50; // 对齐前端一级内存缓存上限（50个会话），防止无限驻留
+
+// 备选 LS 强制重扫冷却时间（10s），严守死胡同 15 防止单 LS 环境高频扫盘
+const ALT_LS_RESCAN_COOLDOWN_MS = 10_000;
+let lastAltLsForceRescanAt = 0;
+
+// 动态模型目录缓存（遇到未知或未编目模型时按需从 LS GetUserStatus 同步，并在运行态自学习限额）
+const DYNAMIC_MODEL_CATALOG_TTL_MS = 5 * 60 * 1000;
+const dynamicModelCatalog = {
+  models: new Set(),
+  aliases: new Map(),
+  limits: new Map(),
+  fetchedAt: 0,
+  lastAttemptAt: 0,
+};
+
+export function clearDynamicModelCatalog() {
+  dynamicModelCatalog.models.clear();
+  dynamicModelCatalog.aliases.clear();
+  dynamicModelCatalog.limits.clear();
+  dynamicModelCatalog.fetchedAt = 0;
+  dynamicModelCatalog.lastAttemptAt = 0;
+}
+
+function registerDynamicModelToken(token, canonicalModel = '') {
+  if (typeof token !== 'string') return;
+  const clean = token.trim();
+  if (!clean) return;
+  dynamicModelCatalog.models.add(clean);
+  dynamicModelCatalog.models.add(clean.toUpperCase());
+  const norm = normalizeModelLookupKey(clean);
+  if (norm) dynamicModelCatalog.models.add(norm);
+
+  if (typeof canonicalModel === 'string' && canonicalModel.trim()) {
+    const canonicalClean = canonicalModel.trim();
+    dynamicModelCatalog.aliases.set(clean, canonicalClean);
+    dynamicModelCatalog.aliases.set(clean.toUpperCase(), canonicalClean);
+    if (norm) dynamicModelCatalog.aliases.set(norm, canonicalClean);
+  }
+}
+
+function registerDynamicModelLimit(token, maxTokens) {
+  if (typeof token !== 'string') return;
+  const clean = token.trim();
+  if (!clean) return;
+  const limitNum = Number(maxTokens);
+  if (!Number.isSafeInteger(limitNum) || limitNum <= 0) return;
+  dynamicModelCatalog.limits.set(clean, limitNum);
+  dynamicModelCatalog.limits.set(clean.toUpperCase(), limitNum);
+  const norm = normalizeModelLookupKey(clean);
+  if (norm) dynamicModelCatalog.limits.set(norm, limitNum);
+}
+
+function applyDynamicLimitIfApplicable(calc, candidateModel, options = {}) {
+  if (!calc || !candidateModel) return;
+  const customLimits = options.customLimits;
+  const dynamicAliases = options.dynamicModelAliases || dynamicModelCatalog.aliases;
+  const dynamicLimits = options.dynamicModelLimits || dynamicModelCatalog.limits;
+  let resolvedLimit = getPlatformTruncationLimit(candidateModel, customLimits, dynamicAliases, dynamicLimits);
+  const runtimeLimit = Number(options.runtimeMaxContextTokens);
+  const runtimeModel = typeof options.runtimeContextModel === 'string' ? options.runtimeContextModel.trim() : '';
+  if (
+    !hasCustomLimitOverride(candidateModel, customLimits, dynamicAliases) &&
+    Number.isSafeInteger(runtimeLimit) &&
+    runtimeLimit > 0 &&
+    (!runtimeModel || isCompatibleRuntimeModel(candidateModel, runtimeModel, dynamicAliases))
+  ) {
+    resolvedLimit = runtimeLimit;
+  }
+  if (typeof resolvedLimit === 'number' && resolvedLimit > 0 && resolvedLimit !== calc.contextLimit) {
+    calc.contextLimit = resolvedLimit;
+    const used = Number(calc.contextUsed) || 0;
+    calc.usageRatio = Math.min(Math.max(used / resolvedLimit, 0), 1);
+    calc.isOverLimit = used >= resolvedLimit;
+  }
+}
+
+/**
+ * 若遇到静态模型表未能精确收录的新模型，按需从 LS GetUserStatus（兼容 GetCascadeModelConfigData）懒同步官方模型列表，
+ * 自动消除未来新模型的“未知模型限制”告警并同步远端模型限额（已编目模型或 TTL 命中时 0 次额外 RPC）。
+ */
+export async function resolveDynamicModelState(calc, lsRef, rpcCaller, options = {}) {
+  if (!calc || options._skipDynamicModelLookup) return calc;
+  const candidateModel = calc.model || calc.selectedModel || calc.executionModel;
+  if (!candidateModel) return calc;
+
+  const dynamicAliases = options.dynamicModelAliases || dynamicModelCatalog.aliases;
+  const dynamicModels = options.dynamicKnownModels || dynamicModelCatalog.models;
+  const dynamicLimits = options.dynamicModelLimits || dynamicModelCatalog.limits;
+
+  const alreadyCataloged = isCatalogedModel(
+    candidateModel,
+    options.customLimits,
+    dynamicAliases,
+    dynamicModels,
+    dynamicLimits
+  );
+
+  if (!calc.isUnknownModel && alreadyCataloged) {
+    applyDynamicLimitIfApplicable(calc, candidateModel, options);
+    return calc;
+  }
+
+  if (calc.isUnknownModel && alreadyCataloged && isKnownModel(candidateModel, options.customLimits, dynamicModels, dynamicLimits)) {
+    calc.isUnknownModel = false;
+    applyDynamicLimitIfApplicable(calc, candidateModel, options);
+    return calc;
+  }
+
+  // 若模型仅通过关键词识别为已知且已有运行态尾游标限额，无需额外发起目录查询
+  if (
+    !calc.isUnknownModel &&
+    Number.isSafeInteger(Number(options.runtimeMaxContextTokens)) &&
+    Number(options.runtimeMaxContextTokens) > 0
+  ) {
+    return calc;
+  }
+
+  const now = Date.now();
+  if (now - dynamicModelCatalog.fetchedAt < DYNAMIC_MODEL_CATALOG_TTL_MS && dynamicModelCatalog.models.size > 0) {
+    if (isCatalogedModel(candidateModel, options.customLimits, dynamicAliases, dynamicModels, dynamicLimits)) {
+      calc.isUnknownModel = false;
+      applyDynamicLimitIfApplicable(calc, candidateModel, options);
+    }
+    return calc;
+  }
+
+  if (!calc.isUnknownModel && now - dynamicModelCatalog.lastAttemptAt < DYNAMIC_MODEL_CATALOG_TTL_MS) {
+    return calc;
+  }
+  dynamicModelCatalog.lastAttemptAt = now;
+
+  try {
+    const resp = await rpcCaller(lsRef, 'GetUserStatus', {
+      metadata: { ideName: 'antigravity', extensionName: 'antigravity' }
+    }, 2500);
+    let configs = resp?.userStatus?.cascadeModelConfigData?.clientModelConfigs ||
+      resp?.cascadeModelConfigData?.clientModelConfigs ||
+      resp?.clientModelConfigs;
+    if (!Array.isArray(configs) && resp?.useCascadeModelConfigDataFallback) {
+      const fallbackResp = await rpcCaller(lsRef, 'GetCascadeModelConfigData', {
+        metadata: { ideName: 'antigravity', extensionName: 'antigravity' }
+      }, 2500);
+      configs = fallbackResp?.clientModelConfigs || fallbackResp?.cascadeModelConfigData?.clientModelConfigs;
+    }
+    if (Array.isArray(configs) && configs.length > 0) {
+      dynamicModelCatalog.fetchedAt = now;
+      for (const cfg of configs) {
+        if (!cfg || typeof cfg !== 'object') continue;
+        const canonicalModel = typeof cfg.modelOrAlias?.model === 'string' ? cfg.modelOrAlias.model.trim() : '';
+        registerDynamicModelToken(canonicalModel, canonicalModel);
+        registerDynamicModelToken(cfg.modelId, canonicalModel);
+        registerDynamicModelToken(cfg.label, canonicalModel);
+
+        const rawCfgLimit = cfg.maxContextTokens ?? cfg.maxTokens ?? cfg.contextWindowTokens ?? cfg.modelOrAlias?.maxContextTokens;
+        const cfgLimit = (rawCfgLimit !== undefined && rawCfgLimit !== null) ? Number(rawCfgLimit) : NaN;
+        const effectiveCfgLimit = (Number.isSafeInteger(cfgLimit) && cfgLimit > 0)
+          ? cfgLimit
+          : getPlatformTruncationLimit(
+              canonicalModel || cfg.modelId || cfg.label,
+              options.customLimits,
+              dynamicModelCatalog.aliases,
+              dynamicModelCatalog.limits
+            );
+        if (Number.isSafeInteger(effectiveCfgLimit) && effectiveCfgLimit > 0) {
+          if (canonicalModel) registerDynamicModelLimit(canonicalModel, effectiveCfgLimit);
+          if (cfg.modelId) registerDynamicModelLimit(cfg.modelId, effectiveCfgLimit);
+          if (cfg.label) registerDynamicModelLimit(cfg.label, effectiveCfgLimit);
+        }
+      }
+      if (isKnownModel(candidateModel, options.customLimits, dynamicModelCatalog.models, dynamicModelCatalog.limits)) {
+        calc.isUnknownModel = false;
+        applyDynamicLimitIfApplicable(calc, candidateModel, options);
+      }
+    }
+  } catch {
+    // 静默兜底：LS 不支持或超时时保留原状态，不阻塞上下文快照返回
+  }
+  return calc;
+}
+
+/**
+ * 通过轻量尾游标 RPC GetCascadeTrajectoryGeneratorMetadata 获取运行态实际下发的 maxContextTokens。
+ * 仅当步骤含 sourceTrajectoryStepInfo.metadataIndex 且游标相比缓存有推进时发起 1 次 RPC（includeMessages=false）；
+ * 无游标或游标未变化时直接命中缓存，发起 0 次额外 RPC。
+ */
+export async function resolveRuntimeGeneratorMetadata(lsRef, rpcCaller, targetCascadeId, analysisSteps, cachedRuntimeMeta = null) {
+  if (!lsRef || !rpcCaller || !targetCascadeId || !Array.isArray(analysisSteps) || analysisSteps.length === 0) {
+    return null;
+  }
+
+  let lastMetaIdx = null;
+  for (let i = analysisSteps.length - 1; i >= 0; i--) {
+    const idx = analysisSteps[i]?.metadata?.sourceTrajectoryStepInfo?.metadataIndex;
+    if (Number.isSafeInteger(idx) && idx >= 0) {
+      lastMetaIdx = idx;
+      break;
+    }
+  }
+  if (lastMetaIdx === null) {
+    return null;
+  }
+
+  if (
+    cachedRuntimeMeta &&
+    cachedRuntimeMeta.metadataIndex === lastMetaIdx &&
+    Number.isSafeInteger(cachedRuntimeMeta.maxContextTokens) &&
+    cachedRuntimeMeta.maxContextTokens > 0
+  ) {
+    if (cachedRuntimeMeta.gmModel) {
+      registerDynamicModelToken(cachedRuntimeMeta.gmModel, cachedRuntimeMeta.gmModel);
+      registerDynamicModelLimit(cachedRuntimeMeta.gmModel, cachedRuntimeMeta.maxContextTokens);
+    }
+    return cachedRuntimeMeta;
+  }
+
+  try {
+    const gmResp = await rpcCaller(lsRef, 'GetCascadeTrajectoryGeneratorMetadata', {
+      cascadeId: targetCascadeId,
+      generatorMetadataOffset: lastMetaIdx,
+      includeMessages: false
+    }, 2500);
+    const list = gmResp?.generatorMetadata;
+    if (Array.isArray(list) && list.length > 0) {
+      const lastGm = list[list.length - 1];
+      const gmModel = typeof lastGm?.chatModel?.model === 'string' ? lastGm.chatModel.model.trim() : '';
+      const displayName = typeof lastGm?.chatModel?.modelDisplayName === 'string' ? lastGm.chatModel.modelDisplayName.trim() : '';
+      const responseModel = typeof lastGm?.chatModel?.responseModel === 'string' ? lastGm.chatModel.responseModel.trim() : '';
+      const planModel = typeof lastGm?.plannerConfig?.planModel === 'string' ? lastGm.plannerConfig.planModel.trim() : '';
+      const modelName = typeof lastGm?.plannerConfig?.modelName === 'string' ? lastGm.plannerConfig.modelName.trim() : '';
+      const rawMax = lastGm?.chatModel?.chatStartMetadata?.contextWindowMetadata?.maxContextTokens;
+      const maxTokens = (rawMax !== undefined && rawMax !== null) ? Number(rawMax) : NaN;
+      if (Number.isSafeInteger(maxTokens) && maxTokens > 0) {
+        const canonical = gmModel || planModel;
+        if (gmModel) {
+          registerDynamicModelToken(gmModel, gmModel);
+          registerDynamicModelLimit(gmModel, maxTokens);
+        }
+        if (displayName) {
+          registerDynamicModelToken(displayName, canonical || displayName);
+          registerDynamicModelLimit(displayName, maxTokens);
+        }
+        if (responseModel) {
+          registerDynamicModelToken(responseModel, canonical || responseModel);
+          registerDynamicModelLimit(responseModel, maxTokens);
+        }
+        if (planModel && (!gmModel || isCompatibleRuntimeModel(planModel, gmModel, dynamicModelCatalog.aliases))) {
+          registerDynamicModelToken(planModel, planModel);
+          registerDynamicModelLimit(planModel, maxTokens);
+          if (modelName) {
+            registerDynamicModelToken(modelName, planModel);
+            registerDynamicModelLimit(modelName, maxTokens);
+          }
+        }
+        return {
+          metadataIndex: lastMetaIdx,
+          gmModel: gmModel || planModel,
+          maxContextTokens: maxTokens
+        };
+      }
+    }
+  } catch {
+    // 静默兜底：RPC 不支持或超时时回退既有缓存或静态阈值，不阻塞快照返回
+  }
+
+  return (cachedRuntimeMeta && Number.isSafeInteger(cachedRuntimeMeta.maxContextTokens) && cachedRuntimeMeta.maxContextTokens > 0)
+    ? cachedRuntimeMeta
+    : null;
+}
 
 // 会话级轨迹增量缓存 (Incremental Trajectory Cache)
 // 只有可见分屏的活跃会话才会频繁刷新，容量取小值即可；每会话最多驻留 5000 个瘦身后的步骤
@@ -178,6 +455,7 @@ export function formatContextResult(calc) {
       isWindowed: false,
       totalSteps: 0,
       windowStartStep: 0,
+      modelLimits: Object.fromEntries(dynamicModelCatalog.limits),
     };
   }
 
@@ -200,7 +478,8 @@ export function formatContextResult(calc) {
   } else if (calc.isTruncated && !calc.isWindowed) {
     tooltip = `${percentNum}% · ${usedK} / ${limitK} 会话数据不完整`;
   } else if (calc.isUnknownModel) {
-    tooltip = `${percentNum}% · ${usedK} / ${limitK} 未知模型限制 默认256K`;
+    const defaultTag = calc.contextLimit && calc.contextLimit !== 256_000 ? `默认${limitK}` : '默认256K';
+    tooltip = `${percentNum}% · ${usedK} / ${limitK} 未知模型限制 ${defaultTag}`;
   }
   if (calc.isWindowed) {
     tooltip += ` · 长会话尾部 ${calc.stepCount}/${calc.totalSteps} 步`;
@@ -234,6 +513,7 @@ export function formatContextResult(calc) {
     isWindowed: !!calc.isWindowed,
     totalSteps: calc.totalSteps || calc.stepCount || 0,
     windowStartStep: calc.windowStartStep || 0,
+    modelLimits: Object.fromEntries(dynamicModelCatalog.limits),
   };
 }
 
@@ -253,12 +533,15 @@ export function getStepFingerprint(s) {
   if (s.id !== undefined && s.id !== null && s.id !== '') {
     return `id:${s.id}`;
   }
-  // 复合字符串提取（涵盖时间戳、步骤类型、用户输入、Planner文本/思考/工具调用、Token指标等）
+  // 复合字符串提取（涵盖时间戳、步骤类型、用户输入、系统消息、Planner文本/思考/工具调用、Token指标等）
   const type = s.type || '';
   const created = (meta?.createdAt !== undefined && meta?.createdAt !== null && meta.createdAt !== '') ? meta.createdAt : '';
   const text = s.userInput?.userResponse ||
                s.plannerResponse?.response ||
                s.plannerResponse?.thinking ||
+               s.systemMessage?.message ||
+               s.systemMessage?.content ||
+               s.systemMessage?.text ||
                '';
   let toolPart = '';
   if (Array.isArray(s.plannerResponse?.toolCalls) && s.plannerResponse.toolCalls.length > 0) {
@@ -306,6 +589,9 @@ export function getStepContentSignature(s) {
   const text = s.userInput?.userResponse ||
                s.plannerResponse?.response ||
                s.plannerResponse?.thinking ||
+               s.systemMessage?.message ||
+               s.systemMessage?.content ||
+               s.systemMessage?.text ||
                '';
   let toolPart = '';
   if (Array.isArray(s.plannerResponse?.toolCalls) && s.plannerResponse.toolCalls.length > 0) {
@@ -385,7 +671,11 @@ export function projectStep(s) {
     if (meta.requestedModel && typeof meta.requestedModel === 'object') {
       pm.requestedModel = { model: meta.requestedModel.model };
     }
-    if (m || pm.requestedModel) {
+    const rawMetaIdx = meta.sourceTrajectoryStepInfo?.metadataIndex;
+    if (Number.isSafeInteger(rawMetaIdx) && rawMetaIdx >= 0) {
+      pm.sourceTrajectoryStepInfo = { metadataIndex: rawMetaIdx };
+    }
+    if (m || pm.requestedModel || pm.sourceTrajectoryStepInfo) {
       out.metadata = pm;
       known = true;
     }
@@ -400,6 +690,14 @@ export function projectStep(s) {
     }
     out.userInput = u;
     known = true;
+  }
+  const sm = s.systemMessage;
+  if (sm && typeof sm === 'object') {
+    const m = pickDefined(sm, ['message', 'content', 'text']);
+    if (m) {
+      out.systemMessage = m;
+      known = true;
+    }
   }
   const pr = s.plannerResponse;
   if (pr && typeof pr === 'object') {
@@ -428,6 +726,8 @@ export async function rpcCallWithRetry(lsRef, method, params, timeoutMs, deps = 
     return await call(lsRef.current, method, params, timeoutMs);
   } catch (err) {
     if (!isRetryableRpcError(err)) throw err;
+    lsRef.forceDiscoveredInRequest = true;
+    lastAltLsForceRescanAt = Date.now();
     const refreshedLs = await discover(true);
     if (!refreshedLs) {
       err.discoveryExhausted = true;
@@ -477,24 +777,44 @@ export async function getContextSnapshot(conversationId = null, force = false, o
       return rpcCallWithRetry(target, method, params, timeout);
     };
 
-    const getAlternativeServers = async (currentLs) => {
-      let all = options._allLs;
-      if (!all) {
-        const discoverAll = options._discoverAllLanguageServers || discoverAllLanguageServers;
-        // 只读 60s 发现缓存，绝不强制刷新：单 LS 环境下若此处 force，查不到的会话每次轮询都会
-        // 拉起 PowerShell + netstat 全量扫描（等同于问题 2 的空转风暴）。新 LS 由缓存过期自然纳入。
-        all = await discoverAll(false);
-      }
-      if (!Array.isArray(all)) return [];
+    const extractUniqueAltServers = (list, currentLs) => {
+      if (!Array.isArray(list)) return [];
       const seenPorts = new Set();
       if (currentLs?.port) seenPorts.add(currentLs.port);
       const uniqueAlts = [];
-      for (const s of all) {
+      for (const s of list) {
         if (!s || !s.port) continue;
         if (!seenPorts.has(s.port)) {
           seenPorts.add(s.port);
           uniqueAlts.push(s);
         }
+      }
+      return uniqueAlts;
+    };
+
+    const getAlternativeServers = async (currentLs) => {
+      if (options._allLs) {
+        return extractUniqueAltServers(options._allLs, currentLs);
+      }
+      const discoverAll = options._discoverAllLanguageServers || discoverAllLanguageServers;
+      const canCallRealDiscovery = Boolean(options._discoverAllLanguageServers || (!options._ls && !options._rpcCall));
+      if (!canCallRealDiscovery) {
+        return [];
+      }
+      // 先读 60s 发现缓存；若过滤当前 LS 后无可用备选且距上次强制重扫已满 10s 冷却期
+      // （且当前请求尚未执行过 force 发现，严守死胡同 15 防二次扫盘），允许触发一次 discoverAll(true) 发现新启动的 LS。
+      let all = await discoverAll(false);
+      let uniqueAlts = extractUniqueAltServers(all, currentLs);
+      const nowTs = Date.now();
+      if (
+        uniqueAlts.length === 0 &&
+        !lsRef.forceDiscoveredInRequest &&
+        nowTs - lastAltLsForceRescanAt >= ALT_LS_RESCAN_COOLDOWN_MS
+      ) {
+        lastAltLsForceRescanAt = nowTs;
+        lsRef.forceDiscoveredInRequest = true;
+        all = await discoverAll(true);
+        uniqueAlts = extractUniqueAltServers(all, currentLs);
       }
       return uniqueAlts;
     };
@@ -768,8 +1088,21 @@ export async function getContextSnapshot(conversationId = null, force = false, o
       analysisSteps = analysisSteps.map(projectStep);
       allSteps = analysisSteps;
 
+      const runtimeMeta = await resolveRuntimeGeneratorMetadata(
+        lsRef,
+        rpcCaller,
+        targetCascadeId,
+        analysisSteps,
+        cachedTraj?.runtimeMeta
+      );
+
       const calcOptions = {
         ...options,
+        dynamicKnownModels: options.dynamicKnownModels || dynamicModelCatalog.models,
+        dynamicModelAliases: options.dynamicModelAliases || dynamicModelCatalog.aliases,
+        dynamicModelLimits: options.dynamicModelLimits || dynamicModelCatalog.limits,
+        runtimeMaxContextTokens: runtimeMeta?.maxContextTokens,
+        runtimeContextModel: runtimeMeta?.gmModel,
         isTruncated,
         isWindowed,
         totalSteps,
@@ -778,6 +1111,7 @@ export async function getContextSnapshot(conversationId = null, force = false, o
         initialCompressionDrop: isWindowed ? (cachedTraj?.compressionDrop || 0) : 0,
       };
       const calc = processTrajectorySteps(analysisSteps, calcOptions);
+      await resolveDynamicModelState(calc, lsRef, rpcCaller, calcOptions);
       const result = formatContextResult(calc);
       if (result && result.ready) {
         result.cid = targetCascadeId;
@@ -794,6 +1128,7 @@ export async function getContextSnapshot(conversationId = null, force = false, o
           lastStepIndex: result.lastStepIndex,
           compressionDetected: calc.compressionDetected || false,
           compressionDrop: calc.compressionDrop || 0,
+          runtimeMeta,
           modelSig,
           time: Date.now()
         });
@@ -1022,8 +1357,21 @@ export async function getContextSnapshot(conversationId = null, force = false, o
         newIsTruncated = true;
       }
 
+      const runtimeMeta = await resolveRuntimeGeneratorMetadata(
+        lsRef,
+        rpcCaller,
+        targetCascadeId,
+        analysisSteps,
+        cachedTraj?.runtimeMeta
+      );
+
       const calcOptions = {
         ...options,
+        dynamicKnownModels: options.dynamicKnownModels || dynamicModelCatalog.models,
+        dynamicModelAliases: options.dynamicModelAliases || dynamicModelCatalog.aliases,
+        dynamicModelLimits: options.dynamicModelLimits || dynamicModelCatalog.limits,
+        runtimeMaxContextTokens: runtimeMeta?.maxContextTokens,
+        runtimeContextModel: runtimeMeta?.gmModel,
         isTruncated: newIsTruncated,
         isWindowed: newIsWindowed,
         totalSteps: newTotalSteps,
@@ -1045,6 +1393,7 @@ export async function getContextSnapshot(conversationId = null, force = false, o
         return await executeFullFetch();
       }
 
+      await resolveDynamicModelState(calc, lsRef, rpcCaller, calcOptions);
       const result = formatContextResult(calc);
       if (result && result.ready) {
         result.cid = targetCascadeId;
@@ -1061,6 +1410,7 @@ export async function getContextSnapshot(conversationId = null, force = false, o
           lastStepIndex: result.lastStepIndex,
           compressionDetected: calc.compressionDetected || false,
           compressionDrop: calc.compressionDrop || 0,
+          runtimeMeta,
           modelSig,
           time: Date.now()
         });
@@ -1093,6 +1443,8 @@ export function _getMemoryCacheInfo() {
       memoryCache.clear();
       trajectoryCache.clear();
       sessionLsBindings.clear();
+      clearDynamicModelCatalog();
+      lastAltLsForceRescanAt = 0;
     }
   };
 }
