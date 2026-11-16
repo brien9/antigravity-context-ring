@@ -2,9 +2,8 @@ import {
   getPlatformTruncationLimit,
   DEFAULT_PLATFORM_LIMIT,
   isKnownModel,
-  isSameModelFamily,
   isPlanExecutePartnerModel,
-  isCompatibleRuntimeModel,
+  shouldApplyRuntimeLimit,
   resolveModelFamilyKey,
   hasCustomLimitOverride,
 } from './model-limits.mjs';
@@ -440,9 +439,7 @@ export function processTrajectorySteps(steps = [], options = {}) {
   const hasExplicitCustomLimit = hasCustomLimitOverride(effectiveCapacityModel, options.customLimits, options.dynamicModelAliases);
   if (
     !hasExplicitCustomLimit &&
-    Number.isSafeInteger(runtimeLimit) &&
-    runtimeLimit > 0 &&
-    (!runtimeModel || !effectiveCapacityModel || isCompatibleRuntimeModel(effectiveCapacityModel, runtimeModel, options.dynamicModelAliases))
+    shouldApplyRuntimeLimit(effectiveCapacityModel, runtimeModel, contextLimit, runtimeLimit, options.dynamicModelAliases)
   ) {
     contextLimit = runtimeLimit;
   }

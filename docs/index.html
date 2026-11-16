@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   
   <title>Antigravity Context Ring - 专为 Google Antigravity 桌面客户端 (Antigravity App) 打造的原生级行内上下文长度监控圆环</title>
-  <meta name="description" content="专为 Google Antigravity 桌面客户端 (Antigravity App) 打造的原生级 19px 行内上下文长度监控圆环。直连 Connect-RPC 物理真值，对齐 256K / 160K / 128K / 80K 截断线与动态自学习闭环，原生支持 Orchestrator 双模型协同、Subagent / Swarm 辅助窗格与 /btw，0ms 切换，~18MB 内存，app.asar 零侵入。">
+  <meta name="description" content="专为 Google Antigravity 桌面客户端 (Antigravity App) 打造的原生级 19px 行内上下文长度监控圆环。直连 Connect-RPC 物理真值，对齐 512K / 256K / 160K / 128K / 80K 截断线与动态自学习闭环，原生支持 Orchestrator 双模型协同、Subagent / Swarm 辅助窗格与 /btw，0ms 切换，~18MB 内存，app.asar 零侵入。">
   <meta name="keywords" content="Google Antigravity, Antigravity IDE, Antigravity App, Antigravity 桌面客户端, Antigravity 插件, Context Window, Auto-Compaction, 上下文监控, Token 计数器, Gemini 4 Hydrogen, Gemini 4 Argon, Gemini 4 Carbon, Orchestrator, Swarm, Subagent, Claude 5.5, Context Ring">
   <meta name="author" content="brien9">
   <link rel="canonical" href="https://brien9.github.io/antigravity-context-ring/">
@@ -15,14 +15,14 @@
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://brien9.github.io/antigravity-context-ring/">
   <meta property="og:title" content="Antigravity Context Ring - Native Inline Context Telemetry for Google Antigravity Desktop App">
-  <meta property="og:description" content="Real-time Connect-RPC token telemetry, multi-tier truncation defense (256K / 160K / 128K / 80K + self-learning maxContextTokens sync), Orchestrator Plan-Execute pairing, Subagent / Swarm / /btw isolation, 0ms instant switch, ~18MB footprint.">
+  <meta property="og:description" content="Real-time Connect-RPC token telemetry, multi-tier truncation defense (512K / 256K / 160K / 128K / 80K + self-learning maxContextTokens sync), Orchestrator Plan-Execute pairing, Subagent / Swarm / /btw isolation, 0ms instant switch, ~18MB footprint.">
   <meta property="og:image" content="https://brien9.github.io/antigravity-context-ring/assets/social-preview.png">
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:url" content="https://brien9.github.io/antigravity-context-ring/">
   <meta name="twitter:title" content="Antigravity Context Ring - 原生级行内上下文长度监控圆环 (Google Antigravity 桌面端)">
-  <meta name="twitter:description" content="专为 Google Antigravity 桌面客户端打造的原生 19px 行内圆环，对齐 256K / 160K / 128K / 80K 真实截断线与免维护动态自学习闭环，适配 Orchestrator、Subagent / Swarm 与 /btw 全场景。">
+  <meta name="twitter:description" content="专为 Google Antigravity 桌面客户端打造的原生 19px 行内圆环，对齐 512K / 256K / 160K / 128K / 80K 真实截断线与免维护动态自学习闭环，适配 Orchestrator、Subagent / Swarm 与 /btw 全场景。">
   <meta name="twitter:image" content="https://brien9.github.io/antigravity-context-ring/assets/social-preview.png">
 
   <!-- GEO & LLM Machine-Readable Specifications -->
@@ -653,7 +653,7 @@
     </div>
     <h1>专为 Google Antigravity 桌面客户端打造的<br>原生级行内上下文长度监控圆环</h1>
     <p class="hero-sub">
-      专为 Antigravity App 桌面客户端（Windows / macOS / Linux）打造，内嵌于模型选择器同级的 19px 极微圆环。直连 Connect-RPC 获取真实物理长度，精准对齐各模型平台截断上限（256K / 160K / 128K / 80K）与运行态动态校准，搭配毫秒级毛玻璃 HUD 气泡，告别强制全损压缩导致的 AI 突然失忆。
+      专为 Antigravity App 桌面客户端（Windows / macOS / Linux）打造，内嵌于模型选择器同级的 19px 极微圆环。直连 Connect-RPC 获取真实物理长度，精准对齐各模型平台截断上限（Gemini 4 512K / Flash &amp; Claude 5.5 256K / Legacy 160K·128K / GPT-OSS 80K）与运行态动态校准，搭配毫秒级毛玻璃 HUD 气泡，告别强制全损压缩导致的 AI 突然失忆。
     </p>
 
     <div class="pills">
@@ -677,7 +677,7 @@
         <img src="assets/hero-showcase.jpg" alt="Antigravity Context Ring - 19px native inline context window indicator with frosted-glass HUD tooltip">
       </div>
       <div class="hero-media-caption">
-        平时静默陪伴，鼠标悬停毫秒级唤出毛玻璃监控气泡 · 精准显示当前消耗与平台真实截断上限（256K / 160K / 128K / 80K + 运行时校准）
+        平时静默陪伴，鼠标悬停毫秒级唤出毛玻璃监控气泡 · 精准显示当前消耗与平台真实截断上限（512K / 256K / 160K / 128K / 80K + 运行时校准）
       </div>
     </div>
   </header>
@@ -710,7 +710,7 @@
         <span class="section-tag">Core Insights</span>
         <h2 class="section-title">为什么你需要 Context Ring？</h2>
         <p class="section-desc">
-          在 Antigravity 中进行深度长链路编码时，你一定经历过 AI 突然“降智”或失忆。这并非模型能力问题，而是客户端针对不同模型及远端实验暗藏的分层截断与自动压缩机制（主流及 Hydrogen 线上 256K / GPT-OSS 80K）。
+          在 Antigravity 中进行深度长链路编码时，你一定经历过 AI 突然“降智”或失忆。这并非模型能力问题，而是客户端针对不同模型及远端实验暗藏的分层截断与自动压缩机制（Gemini 4 系列 512K / Flash 256K / GPT-OSS 80K）。
         </p>
       </div>
 
@@ -719,14 +719,14 @@
           <span class="card-icon">🌪️</span>
           <h3>分层强制全损自动压缩</h3>
           <p>
-            当会话上下文累积到对应模型的真实上限（如主流模型及 Gemini 4 Hydrogen 线上 256K、GPT-OSS 120B 80K）时，客户端会强制触发 Auto-Compaction，抹平早期架构约束与排坑记录。
+            当会话上下文累积到对应模型的真实上限（如 Gemini 4 系列 512K、Flash 256K、GPT-OSS 120B 80K）时，客户端会强制触发 Auto-Compaction，抹平早期架构约束与排坑记录。
           </p>
         </div>
         <div class="card">
           <span class="card-icon">🎯</span>
           <h3>撕开 200 万上下文迷雾</h3>
           <p>
-            底层模型 API 常标称 1M~2M 上下文，但 Antigravity 客户端在 Language Server <code>model_profiles</code> 与远端实验策略中按模型实施物理截断（256K / 160K / 128K / 80K）。Context Ring 结合 <code>GetCascadeTrajectoryGeneratorMetadata</code> 与 <code>GetUserStatus</code> 运行态自学习，将准星死死咬在真实物理红线上。
+            底层模型 API 常标称 1M~2M 上下文，但 Antigravity 客户端在 Language Server <code>model_profiles</code> 与远端策略中按模型实施物理截断（512K / 256K / 160K / 128K / 80K）。Context Ring 结合 <code>GetCascadeTrajectoryGeneratorMetadata</code> 与 <code>GetUserStatus</code> 运行态自学习，将准星死死咬在真实物理红线上。
           </p>
         </div>
         <div class="card">
@@ -816,32 +816,32 @@
           </thead>
           <tbody>
             <tr>
-              <td><strong>Gemini 4 Hydrogen</strong> (XHigh / High / Med / Low)</td>
-              <td><span class="tag-limit tag-256">256K (动态校准)</span></td>
+              <td><strong>Gemini 4 Hydrogen</strong> (Extra / High / Med / Low)</td>
+              <td><span class="tag-limit tag-512">512K (512,000)</span></td>
               <td>1,000,000</td>
               <td>后台自动压缩</td>
-              <td>在线默认 256K 压缩（离线静态为 512K，按运行时 <code>maxContextTokens</code> 自动校准）</td>
+              <td>2026-11 平台侧翻倍放开至 512K，并按运行时 <code>maxContextTokens</code> 持续同步</td>
             </tr>
             <tr>
               <td><strong>Gemini 4 Argon</strong> (High / Med / Low)</td>
-              <td><span class="tag-limit tag-256">256K (256,000)</span></td>
+              <td><span class="tag-limit tag-512">512K (512,000)</span></td>
               <td>1,000,000</td>
               <td>后台自动压缩</td>
-              <td>90% 前收敛并 Commit 当前重构</td>
+              <td>2026-11 平台侧翻倍放开至 512K；90% 前收敛并 Commit 当前重构</td>
             </tr>
             <tr>
               <td><strong>Orchestrator (Argon)</strong></td>
-              <td><span class="tag-limit tag-256">256K (256,000)</span></td>
+              <td><span class="tag-limit tag-512">512K (512,000)</span></td>
               <td>1,000,000</td>
               <td>Plan-Execute 协同</td>
-              <td>自动识别 Plan (<code>M668</code>) ⇄ Execute (<code>M669</code>) 双模型协同，锁住主分母且不断档追踪压缩</td>
+              <td>自动识别 Plan (<code>M668</code>) ⇄ Execute (<code>M669</code>) 双模型协同，锁住 512K 主分母不被低配额子执行步压低</td>
             </tr>
             <tr>
               <td><strong>Gemini 4 Carbon</strong></td>
-              <td><span class="tag-limit tag-256">256K (256,000)</span></td>
+              <td><span class="tag-limit tag-512">512K (512,000)</span></td>
               <td>1,000,000</td>
               <td>后台自动压缩</td>
-              <td>90% 红环前适时归档分叉</td>
+              <td>2026-11 平台侧翻倍放开至 512K；90% 红环前适时归档分叉</td>
             </tr>
             <tr>
               <td><strong>Gemini 3.8 Flash</strong> (High / Med / Low)</td>

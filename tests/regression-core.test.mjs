@@ -496,16 +496,16 @@ test('【回归 7】Cortex 真实协议 Prefix Cache 命中：严禁漏算 cache
   assert.equal(calc.compressionDrop, 0);
   assert.equal(calc.contextUsed, 2523 + 90739 + 253, '物理总占用必须包含 inputTokens + cacheReadTokens + outputTokens (93,515)');
   assert.equal(view.usedK, '93.5K');
-  assert.equal(view.percent, '36.5%');
-  assert.equal(view.tooltip, '36.5% · 93.5K / 256.0K 上下文已使用');
+  assert.equal(view.percent, '18.3%');
+  assert.equal(view.tooltip, '18.3% · 93.5K / 512.0K 上下文已使用');
 });
 
 test('【回归 8】model-limits: 全量覆盖 GetUserStatus 实机模型枚举与 modelId（Gemini 4 Argon / Gemini 3.8 Flash / Claude 5.5）及大小写统一查表', () => {
   const clientModels = [
-    // Gemini 4 Argon (High / Medium / Low)
-    { enumId: 'MODEL_PLACEHOLDER_M417', modelId: 'gemini-4-argon-high', limit: 256_000 },
-    { enumId: 'MODEL_PLACEHOLDER_M418', modelId: 'gemini-4-argon-medium', limit: 256_000 },
-    { enumId: 'MODEL_PLACEHOLDER_M419', modelId: 'gemini-4-argon-low', limit: 256_000 },
+    // Gemini 4 Argon (High / Medium / Low -> 512K)
+    { enumId: 'MODEL_PLACEHOLDER_M417', modelId: 'gemini-4-argon-high', limit: 512_000 },
+    { enumId: 'MODEL_PLACEHOLDER_M418', modelId: 'gemini-4-argon-medium', limit: 512_000 },
+    { enumId: 'MODEL_PLACEHOLDER_M419', modelId: 'gemini-4-argon-low', limit: 512_000 },
     // Gemini 3.8 Flash (High / Medium / Low)
     { enumId: 'MODEL_PLACEHOLDER_M318', modelId: 'gemini-3.8-flash-high', limit: 256_000 },
     { enumId: 'MODEL_PLACEHOLDER_M319', modelId: 'gemini-3.8-flash-medium', limit: 256_000 },
@@ -886,8 +886,8 @@ test('【回归 10】边界细节四合一验证：常规会话与持久压缩�
   assert.equal(compressedRewindCheck.isRewind, true);
   assert.equal(compressedRewindCheck.nextEpoch, 2, '已处于压缩态的会话在用户回退历史消息时必须正常递增世代');
 
-  // 2. 草稿分母推导与 fallbackModel 优先级（在役模型统一 256K 基准，且不覆盖历史轨迹自身的 CHECKPOINT 模型）
-  assert.equal(inferClientModelLimit('Gemini 4 Argon 中'), 256_000);
+  // 2. 草稿分母推导与 fallbackModel 优先级（Gemini 4 512K / Flash & Claude 5.5 256K，且不覆盖历史轨迹自身的 CHECKPOINT 模型）
+  assert.equal(inferClientModelLimit('Gemini 4 Argon 中'), 512_000);
   assert.equal(inferClientModelLimit('Gemini 3.8 Flash 高'), 256_000);
   assert.equal(inferClientModelLimit('Claude Sonnet 5.5'), 256_000);
   assert.equal(inferClientModelLimit('Claude Opus 5.5'), 256_000);
@@ -1236,36 +1236,47 @@ test('【回归 18】冷会话/过渡态 Fiber 预估离线稳态: RPC 失败时
   );
 });
 
-test('【回归 19】前后端模型截断阈值双向对齐: Hydrogen(256K线上基线) / GPT-OSS(80K) / Argon&Carbon&Claude5.5(256K) / Legacy(160K/128K)', () => {
+test('【回归 19】前后端模型截断阈值双向对齐: Gemini 4 全系列(512K) / Flash&Claude5.5(256K) / Legacy(160K/128K) / GPT-OSS(80K)', () => {
   const cases = [
-    // Gemini 4 Hydrogen (线上 AICode Mendel 实际截断基线 256K)
-    { id: 'MODEL_PLACEHOLDER_M525', limit: 256_000 },
-    { id: 'MODEL_PLACEHOLDER_M526', limit: 256_000 },
-    { id: 'MODEL_PLACEHOLDER_M527', limit: 256_000 },
-    { id: 'MODEL_PLACEHOLDER_M528', limit: 256_000 },
-    { id: 'MODEL_PLACEHOLDER_M432', limit: 256_000 },
-    { id: 'MODEL_PLACEHOLDER_M433', limit: 256_000 },
-    { id: 'MODEL_PLACEHOLDER_M434', limit: 256_000 },
-    { id: 'gemini-4-hydrogen', limit: 256_000 },
-    { id: 'gemini-4-hydrogen-high', limit: 256_000 },
-    { id: 'gemini-4-hydrogen-medium', limit: 256_000 },
-    { id: 'gemini-4-hydrogen-low', limit: 256_000 },
-    { id: 'gemini-4-hydrogen-xhigh', limit: 256_000 },
-    { id: 'Gemini 4 Hydrogen (Medium) 新', limit: 256_000 },
-    { id: 'Gemini 4 Hydrogen (XHigh) (New)', limit: 256_000 },
-    // Orchestrator (Argon) (256K)
-    { id: 'MODEL_PLACEHOLDER_M667', limit: 256_000 },
-    { id: 'MODEL_PLACEHOLDER_M668', limit: 256_000 },
-    { id: 'gemini-pro-orchestrator-g1-pro', limit: 256_000 },
-    { id: 'Orchestrator (Argon)', limit: 256_000 },
-    // Gemini 4 Carbon (256K)
-    { id: 'MODEL_PLACEHOLDER_M670', limit: 256_000 },
-    { id: 'gemini-4-carbon-disabled', limit: 256_000 },
-    { id: 'gemini-4-carbon-low', limit: 256_000 },
-    { id: 'gemini-4-carbon-medium', limit: 256_000 },
-    { id: 'gemini-4-carbon-high', limit: 256_000 },
-    { id: 'Gemini 4 Carbon (High) 注意', limit: 256_000 },
-    // Claude Opus/Sonnet 5.5 (256K)
+    // Gemini 4 Hydrogen (512K)
+    { id: 'MODEL_PLACEHOLDER_M525', limit: 512_000 },
+    { id: 'MODEL_PLACEHOLDER_M526', limit: 512_000 },
+    { id: 'MODEL_PLACEHOLDER_M527', limit: 512_000 },
+    { id: 'MODEL_PLACEHOLDER_M528', limit: 512_000 },
+    { id: 'MODEL_PLACEHOLDER_M432', limit: 512_000 },
+    { id: 'MODEL_PLACEHOLDER_M433', limit: 512_000 },
+    { id: 'MODEL_PLACEHOLDER_M434', limit: 512_000 },
+    { id: 'gemini-4-hydrogen', limit: 512_000 },
+    { id: 'gemini-4-hydrogen-high', limit: 512_000 },
+    { id: 'gemini-4-hydrogen-medium', limit: 512_000 },
+    { id: 'gemini-4-hydrogen-low', limit: 512_000 },
+    { id: 'gemini-4-hydrogen-xhigh', limit: 512_000 },
+    { id: 'gemini-4-hydrogen-extra', limit: 512_000 },
+    { id: 'Gemini 4 Hydrogen Extra', limit: 512_000 },
+    { id: 'Gemini 4 Hydrogen (Medium) 新', limit: 512_000 },
+    { id: 'Gemini 4 Hydrogen (XHigh) (New)', limit: 512_000 },
+    // Gemini 4 Argon (512K)
+    { id: 'MODEL_PLACEHOLDER_M417', limit: 512_000 },
+    { id: 'MODEL_PLACEHOLDER_M418', limit: 512_000 },
+    { id: 'MODEL_PLACEHOLDER_M419', limit: 512_000 },
+    { id: 'gemini-4-argon-extra', limit: 512_000 },
+    { id: 'Gemini 4 Argon (High)', limit: 512_000 },
+    // Orchestrator (Argon) (512K)
+    { id: 'MODEL_PLACEHOLDER_M667', limit: 512_000 },
+    { id: 'MODEL_PLACEHOLDER_M668', limit: 512_000 },
+    { id: 'gemini-pro-orchestrator-g1-pro', limit: 512_000 },
+    { id: 'Orchestrator (Argon)', limit: 512_000 },
+    // Gemini 4 Carbon (512K)
+    { id: 'MODEL_PLACEHOLDER_M670', limit: 512_000 },
+    { id: 'gemini-4-carbon-disabled', limit: 512_000 },
+    { id: 'gemini-4-carbon-low', limit: 512_000 },
+    { id: 'gemini-4-carbon-medium', limit: 512_000 },
+    { id: 'gemini-4-carbon-high', limit: 512_000 },
+    { id: 'gemini-4-carbon-extra', limit: 512_000 },
+    { id: 'Gemini 4 Carbon (High) 注意', limit: 512_000 },
+    // Gemini 3.8 Flash & Claude Opus/Sonnet 5.5 (256K)
+    { id: 'MODEL_PLACEHOLDER_M318', limit: 256_000 },
+    { id: 'Gemini 3.8 Flash (High)', limit: 256_000 },
     { id: 'claude-opus-5-5-max', limit: 256_000 },
     { id: 'claude-opus-5.5-max', limit: 256_000 },
     { id: 'Claude Opus 5.5 (Max)', limit: 256_000 },
@@ -1293,8 +1304,9 @@ test('【回归 19】前后端模型截断阈值双向对齐: Hydrogen(256K线�
     assert.equal(inferClientModelLimit(item.id), item.limit, `前端 inferClientModelLimit(${item.id}) 应返回 ${item.limit}`);
   }
 
-  // 防边界数字前缀/后缀误命中（例如 M5250 不得命中 Hydrogen，M180 不得命中 M18 的 128K，M260 不得命中 M26 的 160K）
+  // 防边界数字前缀/后缀误命中（例如 M5250 不得命中 Hydrogen，M4170 不得命中 Argon，M180 不得命中 M18 的 128K，M260 不得命中 M26 的 160K）
   assert.equal(inferClientModelLimit('MODEL_PLACEHOLDER_M5250'), 256_000, 'M5250 不得误匹配 M525');
+  assert.equal(inferClientModelLimit('MODEL_PLACEHOLDER_M4170'), 256_000, 'M4170 不得误匹配 M417');
   assert.equal(inferClientModelLimit('MODEL_PLACEHOLDER_M180'), 256_000, 'M180 不得误匹配 M18 (128K)');
   assert.equal(inferClientModelLimit('MODEL_PLACEHOLDER_M260'), 256_000, 'M260 不得误匹配 M26 (160K)');
   assert.equal(normalizeModelLookupKey('Gemini 4 Hydrogen (Medium) 新'), 'gemini-4-hydrogen-medium');
@@ -1313,8 +1325,8 @@ test('【回归 20】resolveDynamicModelState: GetUserStatus 懒同步、动态�
       model: 'MODEL_PLACEHOLDER_M526',
       isUnknownModel: false,
       contextUsed: 100_000,
-      contextLimit: 256_000,
-      usageRatio: 100_000 / 256_000,
+      contextLimit: 512_000,
+      usageRatio: 100_000 / 512_000,
       isOverLimit: false,
     };
     await resolveDynamicModelState(knownCalc, { port: 1 }, async () => {

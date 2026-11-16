@@ -257,6 +257,67 @@ var __agRingCacheModule = (function() {
     return (Number.isFinite(num) && num >= 4000 && num <= 10000000) ? Math.round(num) : 0;
   }
 
+  function resolveClientModelFamily(raw) {
+    const norm = normalizeClientModelKey(typeof raw === 'string' ? raw : '');
+    if (!norm) return '';
+    if (norm.includes('hydrogen') || /(?:^|-)m(?:52[5-9]|43[2-4])(?=$|-)/.test(norm)) return 'hydrogen';
+    if (norm.includes('orchestrator') || /(?:^|-)m66[78](?=$|-)/.test(norm)) return 'orchestrator';
+    if (
+      norm.includes('argon') ||
+      /(?:^|-)m(?:41[7-9]|40[89]|41[0-3]|42[0-9]|43[01]|43[78])(?=$|-)/.test(norm)
+    ) {
+      return 'argon';
+    }
+    if (norm.includes('carbon') || /(?:^|-)m670(?=$|-)/.test(norm)) return 'carbon';
+    if (
+      /(?:^|-)m(?:31[7-9]|32[0-2]|669|124|301)(?=$|-)/.test(norm) ||
+      norm.includes('3-8-flash') ||
+      norm.includes('3.8-flash') ||
+      norm.includes('gemini-flash')
+    ) {
+      return 'flash-3.8';
+    }
+    if (/(?:^|-)m(?:84|20|187)(?=$|-)/.test(norm) || norm.includes('3-5-flash') || norm.includes('3.5-flash')) {
+      return 'flash-3.5';
+    }
+    if (
+      /(?:^|-)m(?:40[0-7]|341)(?=$|-)/.test(norm) ||
+      norm.includes('claude-opus-5-5') ||
+      norm.includes('claude-sonnet-5-5') ||
+      norm.includes('claude-opus-5.5') ||
+      norm.includes('claude-sonnet-5.5') ||
+      norm.includes('claude-5-5') ||
+      norm.includes('claude-5.5')
+    ) {
+      return 'claude-5.5';
+    }
+    if (
+      norm.includes('claude-4') ||
+      norm.includes('claude-sonnet-4') ||
+      norm.includes('claude-opus-4') ||
+      norm.includes('claude-3-7') ||
+      norm.includes('claude-3.7') ||
+      norm.includes('claude-3-5') ||
+      norm.includes('claude-3.5')
+    ) {
+      return 'claude-4';
+    }
+    if (norm.includes('gpt-oss') || /(?:^|-)120b(?=$|-)/.test(norm)) return 'gpt-oss';
+    if (
+      /(?:^|-)m(?:50|18|148|198)(?=$|-)/.test(norm) ||
+      norm.includes('gemini-2-5') ||
+      norm.includes('gemini-2.5') ||
+      norm.includes('2-5-pro') ||
+      norm.includes('2.5-pro') ||
+      norm.includes('2-5-flash') ||
+      norm.includes('2.5-flash')
+    ) {
+      return 'gemini-2.5';
+    }
+    if (/(?:^|-)m(?:26|35)(?=$|-)/.test(norm)) return 'm26';
+    return norm;
+  }
+
   // 前端轻量模型截断阈值推导（优先读取 DOM data-context-window 与动态自学习缓存，未命中再回退静态正则与 256K 兜底）
   function inferClientModelLimit(modelHint = '', modelElOrOptions = null) {
     if (modelElOrOptions && typeof modelElOrOptions === 'object') {
@@ -289,9 +350,16 @@ var __agRingCacheModule = (function() {
       }
     }
 
-    // 1. Gemini 4 Hydrogen (静态离线为 512K，但线上 AICode Mendel 远端策略统一压在 256K): hydrogen / M525..M528 / canonical M432..M434
-    if (lower.includes('hydrogen') || /(?:^|[^a-z0-9])m(?:52[5-8]|43[2-4])(?=$|[^0-9])/.test(lower)) {
-      return 256000;
+    // 1. Gemini 4 全系列 (512K - 2026-11 Antigravity 平台侧翻倍放开):
+    //    Hydrogen / Argon / Carbon / Orchestrator (Argon) 及对应内部 M408~M438 / M525~M529 / M667~M668 / M670
+    if (
+      lower.includes('hydrogen') ||
+      lower.includes('argon') ||
+      lower.includes('carbon') ||
+      lower.includes('orchestrator') ||
+      /(?:^|[^a-z0-9])m(?:40[89]|41[0-3]|41[7-9]|42[0-4]|42[7-9]|43[0-4]|43[78]|52[5-9]|66[78]|670)(?=$|[^0-9])/.test(lower)
+    ) {
+      return 512000;
     }
 
     // 2. GPT-OSS 120B (80K)
@@ -315,7 +383,7 @@ var __agRingCacheModule = (function() {
       return 128000;
     }
 
-    // 5. Gemini 4 Argon / Orchestrator (Argon) / Gemini 4 Carbon / Gemini 3.8 Flash / Claude 5.5 及未收录模型兜底 (256K)
+    // 5. Gemini 3.8 Flash / 3.7 / 3.6 / 3.5 / Claude 5.5 及未收录模型兜底 (256K)
     return 256000;
   }
 
@@ -354,6 +422,7 @@ var __agRingCacheModule = (function() {
     updateClientModelLimits,
     clearClientModelLimits,
     normalizeClientModelKey,
+    resolveClientModelFamily,
     getRingColor
   };
 })();
@@ -384,6 +453,7 @@ function installAgContextRingWidget() {
     sanitizeLRUIndex,
     inferClientModelLimit,
     updateClientModelLimits,
+    resolveClientModelFamily,
     getRingColor
   } = __agRingCacheModule;
   const memoryCache = new MemoryLRUCache(50);
@@ -490,6 +560,16 @@ function installAgContextRingWidget() {
       for (const candidate of [data.modelId, data.selectedModel, data.model, data.checkpointModel]) {
         if (typeof candidate === 'string' && candidate.trim()) {
           learned.push([candidate.trim(), data.limit]);
+        }
+      }
+      // 仅当 UI 按钮模型提示与快照权威模型属于同一模型族时，才将展示名同步学入自学习缓存，防止下拉框切换污染异族模型
+      const uiHint = typeof options.modelHint === 'string' ? options.modelHint.trim() : '';
+      if (uiHint) {
+        const hintFam = resolveClientModelFamily(uiHint);
+        const primaryRef = data.selectedModel || data.model || data.modelId || data.checkpointModel || '';
+        const primaryFam = resolveClientModelFamily(primaryRef);
+        if (hintFam && primaryFam && hintFam === primaryFam) {
+          learned.push([uiHint, data.limit]);
         }
       }
       if (learned.length > 0) {
@@ -1509,8 +1589,9 @@ function installAgContextRingWidget() {
     // 优先级 3：后台静默校验（SWR + In-Flight 合并请求 + 分屏独立序列号防乱序与离线稳态守卫）
     const seq = ++inst.fetchSeq;
     let data = null;
+    let modelHint = '';
     try {
-      const modelHint = extractPaneModelHint(inst.box, inst.model);
+      modelHint = extractPaneModelHint(inst.box, inst.model);
       inst.lastModelHint = modelHint;
       // 历史会话的纯下拉变化只更新 fallback 提示；force 仅由真实 agent 状态变化等调用方显式触发
       const reqOptions = modelHint ? { ...syncOptions, fallbackModel: modelHint } : syncOptions;
@@ -1525,7 +1606,7 @@ function installAgContextRingWidget() {
       const isCidMismatch = !!(returnedCid && returnedCid !== cid.toLowerCase());
 
       if (data && data.ready && !isCidMismatch) {
-        setCachedSnapshot(cid, data);
+        setCachedSnapshot(cid, data, modelHint ? { modelHint } : {});
         refreshSideQuestionDraftPreviews(cid);
       }
 
@@ -2019,5 +2100,6 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports.updateClientModelLimits = __agRingCacheModule.updateClientModelLimits;
   module.exports.clearClientModelLimits = __agRingCacheModule.clearClientModelLimits;
   module.exports.normalizeClientModelKey = __agRingCacheModule.normalizeClientModelKey;
+  module.exports.resolveClientModelFamily = __agRingCacheModule.resolveClientModelFamily;
   module.exports.getRingColor = __agRingCacheModule.getRingColor;
 }

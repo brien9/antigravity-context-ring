@@ -1081,7 +1081,7 @@ test('【尾游标动态校准】GetCascadeTrajectoryGeneratorMetadata 按 metad
   const testCid = 'mock-cascade-runtime-gm-calibration';
   let metaRpcCalls = 0;
   let lastMetaParams = null;
-  let runtimeMaxTokens = 512_000;
+  let runtimeMaxTokens = 1_000_000;
   let stepList = [
     {
       stepIndex: 0,
@@ -1095,7 +1095,7 @@ test('【尾游标动态校准】GetCascadeTrajectoryGeneratorMetadata 按 metad
         sourceTrajectoryStepInfo: { metadataIndex: 134 },
         modelUsage: {
           model: 'MODEL_PLACEHOLDER_M525',
-          inputTokens: 128_000,
+          inputTokens: 250_000,
           outputTokens: 0,
           cacheReadTokens: 0,
           cacheCreationTokens: 0
@@ -1132,7 +1132,7 @@ test('【尾游标动态校准】GetCascadeTrajectoryGeneratorMetadata 按 metad
     return {};
   }
 
-  // 1. 冷启动全量拉取：发起 1 次尾游标 RPC（offset=134, includeMessages=false），限额校准为 512K
+  // 1. 冷启动全量拉取：发起 1 次尾游标 RPC（offset=134, includeMessages=false），限额校准为 1M
   const snap1 = await getContextSnapshot(testCid, true, { _ls: { port: 9999 }, _rpcCall: mockRpc });
   assert.equal(metaRpcCalls, 1, '存在 sourceTrajectoryStepInfo.metadataIndex 时应调 1 次尾游标 RPC');
   assert.deepEqual(lastMetaParams, {
@@ -1140,7 +1140,7 @@ test('【尾游标动态校准】GetCascadeTrajectoryGeneratorMetadata 按 metad
     generatorMetadataOffset: 134,
     includeMessages: false
   });
-  assert.equal(snap1.limit, 512_000, '分母必须被运行时 maxContextTokens (512000) 覆盖');
+  assert.equal(snap1.limit, 1_000_000, '分母必须被运行时 maxContextTokens (1000000) 覆盖');
   assert.equal(snap1.ratio, 0.25);
 
   // 2. 增量轮询：新增一个不含 metadataIndex 的 CHECKPOINT 步，尾游标仍为 134，直接命中缓存（0 额外 GM RPC）
@@ -1150,18 +1150,18 @@ test('【尾游标动态校准】GetCascadeTrajectoryGeneratorMetadata 按 metad
     metadata: {
       modelUsage: {
         model: 'MODEL_PLACEHOLDER_M525',
-        inputTokens: 256_000,
+        inputTokens: 500_000,
         outputTokens: 0
       }
     }
   });
   const snap2 = await getContextSnapshot(testCid, true, { _ls: { port: 9999 }, _rpcCall: mockRpc });
   assert.equal(metaRpcCalls, 1, 'metadataIndex 未推进时不得重复发起 GetCascadeTrajectoryGeneratorMetadata RPC');
-  assert.equal(snap2.limit, 512_000, '增量缓存中的 runtimeMeta 必须持续生效');
+  assert.equal(snap2.limit, 1_000_000, '增量缓存中的 runtimeMeta 必须持续生效');
   assert.equal(snap2.ratio, 0.5);
 
-  // 3. 尾游标推进至 135 且远端策略改为 256K：重新拉取并立即生效
-  runtimeMaxTokens = 256_000;
+  // 3. 尾游标推进至 135 且远端策略回落至 512K：重新拉取并立即生效
+  runtimeMaxTokens = 512_000;
   stepList.push({
     stepIndex: 3,
     type: StepType.PLANNER_RESPONSE,
@@ -1169,7 +1169,7 @@ test('【尾游标动态校准】GetCascadeTrajectoryGeneratorMetadata 按 metad
       sourceTrajectoryStepInfo: { metadataIndex: 135 },
       modelUsage: {
         model: 'MODEL_PLACEHOLDER_M525',
-        inputTokens: 256_000,
+        inputTokens: 512_000,
         outputTokens: 0
       }
     },
@@ -1178,7 +1178,7 @@ test('【尾游标动态校准】GetCascadeTrajectoryGeneratorMetadata 按 metad
   const snap3 = await getContextSnapshot(testCid, true, { _ls: { port: 9999 }, _rpcCall: mockRpc });
   assert.equal(metaRpcCalls, 2, 'metadataIndex 推进至 135 时应发起第 2 次尾游标 RPC');
   assert.equal(lastMetaParams.generatorMetadataOffset, 135);
-  assert.equal(snap3.limit, 256_000, '分母应立即校准为远端最新下发的 256K');
+  assert.equal(snap3.limit, 512_000, '分母应立即校准为远端最新下发的 512K');
   assert.equal(snap3.ratio, 1);
 });
 
@@ -1223,7 +1223,7 @@ test('【Swarm Worker 投影与增量】projectStep 保留 systemMessage 字段�
   assert.equal(snap1.isEstimated, true);
   assert.ok(snap1.used > 10_000, '瘦身投影后仍需保留 systemMessage 文本参与首轮估算');
 
-  // 2. 增量追加 Worker 的首个 PLANNER_RESPONSE 权威快照 (MODEL_PLACEHOLDER_M418, 256K)
+  // 2. 增量追加 Worker 的首个 PLANNER_RESPONSE 权威快照 (MODEL_PLACEHOLDER_M418, 512K)
   workerSteps.push({
     stepIndex: 1,
     type: StepType.PLANNER_RESPONSE,
@@ -1246,8 +1246,8 @@ test('【Swarm Worker 投影与增量】projectStep 保留 systemMessage 字段�
     selectedModel: 'GPT-OSS 120B (Medium)',
   });
   assert.equal(snap2.selectedModel, 'MODEL_PLACEHOLDER_M418', '增量合并后权威快照必须纠正外部借用的 80K 模型');
-  assert.equal(snap2.limit, 256_000, '分母必须更新为 M418 的 256K');
-  assert.equal(snap2.ratio, 0.25);
+  assert.equal(snap2.limit, 512_000, '分母必须更新为 M418 的 512K');
+  assert.equal(snap2.ratio, 0.125);
 });
 
 test('【动态限额自学习闭环】GeneratorMetadata 与 GetUserStatus 自动学习模型限额并通过 formatContextResult.modelLimits 下发', async () => {
@@ -1410,6 +1410,69 @@ test('【备选 LS 10s 冷却重扫与死胡同 15 防护】缓存无备选时�
   });
   assert.equal(snap2.ready, false);
   assert.deepEqual(discoverHistory, [false], '10s 冷却期内必须仅调用 discoverAll(false)，严禁重复拉起强制扫盘');
+});
+
+test('【Orchestrator 搭档防护】M668 主会话遇到 M669 (256K) 执行尾游标时绝不向下覆盖或污染 M668 (512K) 目录限额', async () => {
+  clearDynamicModelCatalog();
+  const testCid = 'mock-cascade-orch-partner-guard';
+  const orchSteps = [
+    {
+      stepIndex: 0,
+      type: StepType.USER_INPUT,
+      userInput: {
+        userResponse: '规划架构并委派子执行',
+        userConfig: { plannerConfig: { planModel: 'MODEL_PLACEHOLDER_M668' } }
+      }
+    },
+    {
+      stepIndex: 1,
+      type: StepType.PLANNER_RESPONSE,
+      metadata: {
+        sourceTrajectoryStepInfo: { metadataIndex: 22 },
+        generatorModel: 'MODEL_PLACEHOLDER_M669',
+        modelUsage: {
+          model: 'MODEL_PLACEHOLDER_M669',
+          inputTokens: 128_000,
+          outputTokens: 0
+        }
+      },
+      plannerResponse: { response: 'Executing step.' }
+    }
+  ];
+
+  async function mockOrchRpc(_target, method) {
+    if (method === 'GetCascadeTrajectorySteps') {
+      return { steps: orchSteps };
+    }
+    if (method === 'GetCascadeTrajectoryGeneratorMetadata') {
+      return {
+        generatorMetadata: [
+          {
+            plannerConfig: {
+              planModel: 'MODEL_PLACEHOLDER_M668',
+              modelName: 'gemini-pro-orchestrator-g1-pro'
+            },
+            chatModel: {
+              model: 'MODEL_PLACEHOLDER_M669',
+              modelDisplayName: 'Gemini Flash Worker',
+              chatStartMetadata: {
+                contextWindowMetadata: { maxContextTokens: '256000' }
+              }
+            }
+          }
+        ]
+      };
+    }
+    return {};
+  }
+
+  const snap = await getContextSnapshot(testCid, true, { _ls: { port: 9999 }, _rpcCall: mockOrchRpc });
+  assert.equal(snap.selectedModel, 'MODEL_PLACEHOLDER_M668');
+  assert.equal(snap.limit, 512_000, '执行搭档 M669 返回 256K 时绝不得向下压低主模型 M668 的 512K 分母');
+  assert.equal(snap.ratio, 0.25);
+  assert.equal(snap.modelLimits['MODEL_PLACEHOLDER_M669'], 256_000, 'M669 自身目录限额应正常登记为 256K');
+  assert.equal(snap.modelLimits['MODEL_PLACEHOLDER_M668'], undefined, 'M669 的 256K 绝不得反向写入污染 planModel M668 的动态限额字典');
+  clearDynamicModelCatalog();
 });
 
 

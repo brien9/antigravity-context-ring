@@ -421,7 +421,7 @@ test('【行为级 6】isDraftView 三态区分: 识别失败不伪装 0%，确�
     await new Promise((r) => setTimeout(r, 30));
 
     const tipB = hB.getShadowText('tooltip-text');
-    assert.equal(tipB, '新会话 · 0.0K / 256.0K 上下文未占用', '确认无疑的草稿态必须保留 0% 基准并跟随模型分母');
+    assert.equal(tipB, '新会话 · 0.0K / 512.0K 上下文未占用', '确认无疑的草稿态必须保留 0% 基准并跟随 Gemini 4 模型 512K 分母');
     assert.equal(hB.rpcRequests.length, 0, '草稿态不得发起任何会话请求');
   } finally {
     hB.cleanup();
@@ -560,7 +560,7 @@ test('【行为级 5】install.ps1 配置安全: 空白可初始化、损坏拒�
   assert.equal(cfg4.plugins['antigravity-context-ring'].enabled, true, '安装后必须启用本插件');
 });
 
-test('【行为级 7】草稿态 getDraftSnapshot 动态 256.0K / 128.0K / 80.0K 提示与切模型立即刷新', async () => {
+test('【行为级 7】草稿态 getDraftSnapshot 动态 512.0K / 256.0K / 128.0K / 80.0K 提示与切模型立即刷新', async () => {
   const h = buildWidgetDomHarness({
     initialModelText: 'Gemini 4 Hydrogen (Medium) 新',
     providerState: { conversationId: null, trajectorySlice: { totalStepsLength: 0 }, turns: [] },
@@ -572,7 +572,7 @@ test('【行为级 7】草稿态 getDraftSnapshot 动态 256.0K / 128.0K / 80.0K
     await new Promise((r) => setTimeout(r, 30));
 
     assert.equal(h.rpcRequests.length, 0, '草稿态挂载不得发起 RPC');
-    assert.equal(h.getShadowText('tooltip-text'), '新会话 · 0.0K / 256.0K 上下文未占用', 'Gemini 4 Hydrogen 线上默认草稿应显示 256.0K');
+    assert.equal(h.getShadowText('tooltip-text'), '新会话 · 0.0K / 512.0K 上下文未占用', 'Gemini 4 Hydrogen 平台翻倍后草稿应显示 512.0K');
 
     // 切换为 GPT-OSS 120B (Medium) 注意 -> 触发 MutationObserver 120ms 防抖并在短路分支立即刷新为 80.0K
     h.setModelText('GPT-OSS 120B (Medium) 注意');
@@ -587,16 +587,22 @@ test('【行为级 7】草稿态 getDraftSnapshot 动态 256.0K / 128.0K / 80.0K
     await new Promise((r) => setTimeout(r, 160));
     assert.equal(h.getShadowText('tooltip-text'), '新会话 · 0.0K / 128.0K 上下文未占用', '切换 Gemini 2.5 Pro 后必须立即刷新为 128.0K');
 
-    // 再切换为 Orchestrator (Argon) / Gemini 4 Carbon -> 立即刷新为 256.0K
+    // 切换为 Gemini 3.8 Flash (High) -> 维持 256.0K 基准
+    h.setModelText('Gemini 3.8 Flash (High)');
+    h.triggerMutation();
+    await new Promise((r) => setTimeout(r, 160));
+    assert.equal(h.getShadowText('tooltip-text'), '新会话 · 0.0K / 256.0K 上下文未占用', '切换 Gemini 3.8 Flash 后必须刷新为 256.0K');
+
+    // 再切换为 Orchestrator (Argon) / Gemini 4 Carbon -> 立即刷新为 512.0K
     h.setModelText('Orchestrator (Argon) [Notice]');
     h.triggerMutation();
     await new Promise((r) => setTimeout(r, 160));
-    assert.equal(h.getShadowText('tooltip-text'), '新会话 · 0.0K / 256.0K 上下文未占用', '切换 Orchestrator (Argon) 后必须立即刷新为 256.0K');
+    assert.equal(h.getShadowText('tooltip-text'), '新会话 · 0.0K / 512.0K 上下文未占用', '切换 Orchestrator (Argon) 后必须立即刷新为 512.0K');
 
     h.setModelText('Gemini 4 Carbon (High) Unavailable');
     h.triggerMutation();
     await new Promise((r) => setTimeout(r, 160));
-    assert.equal(h.getShadowText('tooltip-text'), '新会话 · 0.0K / 256.0K 上下文未占用', '切换 Gemini 4 Carbon 后必须保持 256.0K');
+    assert.equal(h.getShadowText('tooltip-text'), '新会话 · 0.0K / 512.0K 上下文未占用', '切换 Gemini 4 Carbon 后必须保持 512.0K');
     assert.equal(h.rpcRequests.length, 0, '全程草稿态零网络请求');
   } finally {
     h.cleanup();

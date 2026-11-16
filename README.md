@@ -49,13 +49,13 @@ sh ./install.sh            # macOS / Linux
 
 ## 💡 为什么需要它？ · Why Context Ring?
 
-底层模型原生的上下文多为 1M 级别，但 Antigravity 客户端按模型档案及远端策略执行分层物理截断（主流在役模型 **256K** / **Gemini 4 Hydrogen 256K** [运行时动态校准] / **GPT-OSS 120B 80K**），到点强制触发有损压缩，而官方 UI 全程不显示余量、压缩前也不预警。
+底层模型原生的上下文多为 1M 级别，但 Antigravity 客户端按模型档案及远端策略执行分层物理截断（**Gemini 4 系列 512K** / **Gemini 3.8 Flash & Claude 5.5 256K** / **GPT-OSS 120B 80K**），到点强制触发有损压缩，而官方 UI 全程不显示余量、压缩前也不预警。
 
 Context Ring 把这根真实的截断线做成一颗 19px 的行内圆环：
 
 | 核心维度 | 宿主原生默认 | 常见粗估方案 / 外部脚本 | Antigravity Context Ring |
 | :--- | :--- | :--- | :--- |
-| **截断分母基准** | 隐藏式管理，按模型与远端策略达 80K / 128K / 160K / 256K 自动压缩 | 多按 1M 或字符比估算，难反映实际截断线 | **对齐真实多级截断线**（主流 & Hydrogen 256K / GPT-OSS 80K）+ **动态限额自学习** |
+| **截断分母基准** | 隐藏式管理，按模型与远端策略达 80K / 128K / 160K / 256K / 512K 自动压缩 | 多按 1M 或字符比估算，难反映实际截断线 | **对齐真实多级截断线**（Gemini 4 512K / Flash 256K / GPT-OSS 80K）+ **动态限额自学习** |
 | **Token 计量源** | 内部维持，界面未暴露实时读数 | 依赖字符估算，无法细分 Prompt Cache | **直读 Connect-RPC 快照**，解析真实 `modelUsage` |
 | **交互形态** | 极简无额外元素 | 独立小窗口或终端命令打印 | **19px 原生行内圆环**，悬停即看毛玻璃 HUD |
 | **多任务隔离** | 官方独立分屏 | 易受全局状态干扰，多屏时易混淆 | **React Fiber 与作用域隔离**，分屏 / `/btw` / Subagent / Swarm 互不串台 |
@@ -130,7 +130,7 @@ flowchart TD
 
 * **纯硬件级 RPC 快照（零字符猜测）**：遵循成熟 Harness 规范，直接从底层 Language Server 提取 `modelUsage` 结构，完整纳入输入、输出、`cacheReadTokens` 与 `cacheCreationTokens`。
 * **三层模型解耦与 Plan-Execute 协同**：严格区分 `selectedModel`（UI 主选模型，唯一决定分母）、`executionModel`（当前步骤执行模型）与 `checkpointModel`（快照落盘模型）。既能根除普通 Subagent 临时调用轻量模型导致的进度条失真，也能精准识别 `Orchestrator (Argon)`（Plan `M668` ⇄ Execute 执行模型 `M669`）的同会话协同关系——锁住主分母不被执行模型篡改，同时允许执行步尾游标继续校准分母并准确捕获跨模型 `CHECKPOINT` 压缩；对 0 `USER_INPUT` 的 Swarm Worker 轨迹则结合 `SYSTEM_MESSAGE` 首轮估算与首个权威快照自动重锚定。
-* **多级物理阈值与免维护动态自学习闭环**：基于 Language Server `model_profiles` 与实机 `CHECKPOINT` 触发点锁定真实分母——**Gemini 4 Hydrogen / Gemini 4 Argon / Orchestrator (Argon) / Gemini 4 Carbon / Gemini 3.8 Flash / Claude Opus & Sonnet 5.5 256K (256,000)**（注：Hydrogen 离线静态为 512K、线上默认压在 256K，Claude 5.5 命中 `claude-1m_840k` 等实验分支时按实测上限校准）、**Legacy M26/M35 & Claude 4 160K**、**Gemini 2.5 128K**、**GPT-OSS 120B 80K (80,000)**。通过尾游标 RPC `GetCascadeTrajectoryGeneratorMetadata` 读取运行态 `maxContextTokens` 与 `GetUserStatus`（兼容 `GetCascadeModelConfigData`）动态同步模型目录，将学到的限额与别名随快照透传并持久化至前端 `localStorage`，让草稿态与新模型无需手动更新静态表即可全自动对齐。
+* **多级物理阈值与免维护动态自学习闭环**：基于 Language Server `model_profiles` 与实机 `CHECKPOINT` 触发点锁定真实分母——**Gemini 4 Hydrogen / Gemini 4 Argon / Orchestrator (Argon) / Gemini 4 Carbon 512K (512,000)**（随 2026-11 Antigravity 平台侧 Gemini 4 翻倍更新同步升级；`Orchestrator` 与执行伙伴 `M669` 协同时自动保护主规划模型不被低配额子执行步压低分母）、**Gemini 3.8 Flash / Claude Opus & Sonnet 5.5 256K (256,000)**（Claude 5.5 命中 `claude-1m_840k` 等实验分支时按实测上限校准）、**Legacy M26/M35 & Claude 4 160K**、**Gemini 2.5 128K**、**GPT-OSS 120B 80K (80,000)**。通过尾游标 RPC `GetCascadeTrajectoryGeneratorMetadata` 读取运行态 `maxContextTokens` 与 `GetUserStatus`（兼容 `GetCascadeModelConfigData`）动态同步模型目录，将学到的限额与别名随快照透传并持久化至前端 `localStorage`（含同族 UI 展示名联动学习），让草稿态与新模型无需手动更新静态表即可全自动对齐。
 * **双阶 SWR 与 Never-Reset 防线**：内置 50 会话内存 LRU + 100 会话 LocalStorage 持久化快照。切换历史会话 0ms 渲染有效快照并后台静默校准；遇到窗口重载或 Language Server 偶发重启时，强制锁死最后一帧有效状态，绝不闪烁归零。
 * **权威总步数 + 尾部窗口与重载自愈**：突破单次 RPC 查询的 1000 步限制，超过 5000 步时读取权威 `stepCount` 并聚焦最新 5000 步，确保当前 Checkpoint 不被旧前缀遮蔽；同时精确过滤 `data:` / `about:blank` / `plugin:` 等非应用 CDP Target，监听 `Runtime.executionContextCreated` 实现重载 0ms 瞬时重注，并优先通过宿主环境变量实现零进程扫描直连。
 

@@ -7,7 +7,7 @@ import {
   normalizeModelLookupKey,
   getPlatformTruncationLimit,
   isSameModelFamily,
-  isCompatibleRuntimeModel,
+  shouldApplyRuntimeLimit,
   hasCustomLimitOverride,
 } from './model-limits.mjs';
 
@@ -76,9 +76,7 @@ function applyDynamicLimitIfApplicable(calc, candidateModel, options = {}) {
   const runtimeModel = typeof options.runtimeContextModel === 'string' ? options.runtimeContextModel.trim() : '';
   if (
     !hasCustomLimitOverride(candidateModel, customLimits, dynamicAliases) &&
-    Number.isSafeInteger(runtimeLimit) &&
-    runtimeLimit > 0 &&
-    (!runtimeModel || isCompatibleRuntimeModel(candidateModel, runtimeModel, dynamicAliases))
+    shouldApplyRuntimeLimit(candidateModel, runtimeModel, resolvedLimit, runtimeLimit, dynamicAliases)
   ) {
     resolvedLimit = runtimeLimit;
   }
@@ -259,7 +257,7 @@ export async function resolveRuntimeGeneratorMetadata(lsRef, rpcCaller, targetCa
           registerDynamicModelToken(responseModel, canonical || responseModel);
           registerDynamicModelLimit(responseModel, maxTokens);
         }
-        if (planModel && (!gmModel || isCompatibleRuntimeModel(planModel, gmModel, dynamicModelCatalog.aliases))) {
+        if (planModel && (!gmModel || isSameModelFamily(planModel, gmModel, dynamicModelCatalog.aliases))) {
           registerDynamicModelToken(planModel, planModel);
           registerDynamicModelLimit(planModel, maxTokens);
           if (modelName) {

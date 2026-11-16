@@ -31,7 +31,7 @@ test('estimateTokensFromText: 中英文字符权重准确计算', () => {
 });
 
 test('getPlatformTruncationLimit: 严格映射平台真实截断阈值', () => {
-  // Gemini 4 Hydrogen (线上 AICode Mendel 默认 256K 截断) - M525..M528 & M432..M434 & 别名 & 带 UI 徽章标签
+  // Gemini 4 Hydrogen (2026-11 Antigravity 平台侧翻倍放开至 512K) - M525..M528 & M432..M434 & 别名 & 带 UI 徽章标签
   for (const id of [
     'MODEL_PLACEHOLDER_M525',
     'MODEL_PLACEHOLDER_M526',
@@ -45,22 +45,26 @@ test('getPlatformTruncationLimit: 严格映射平台真实截断阈值', () => {
     'gemini-4-hydrogen-medium',
     'gemini-4-hydrogen-low',
     'gemini-4-hydrogen-xhigh',
+    'gemini-4-hydrogen-extra',
+    'Gemini 4 Hydrogen Extra',
     'Gemini 4 Hydrogen (Medium) 新',
   ]) {
-    assert.equal(getPlatformTruncationLimit(id), 256_000, `${id} 默认线上基线必须映射为 256K`);
+    assert.equal(getPlatformTruncationLimit(id), 512_000, `${id} 平台基线必须映射为 512K`);
     assert.equal(isKnownModel(id), true, `${id} 必须识别为已知模型`);
   }
 
-  // Gemini 4 Argon -> 256,000 (256k)
-  assert.equal(getPlatformTruncationLimit('MODEL_PLACEHOLDER_M417'), 256_000);
-  // Orchestrator (Argon) -> 256,000
+  // Gemini 4 Argon -> 512,000 (512k)
+  for (const id of ['MODEL_PLACEHOLDER_M417', 'MODEL_PLACEHOLDER_M418', 'MODEL_PLACEHOLDER_M419', 'gemini-4-argon-extra']) {
+    assert.equal(getPlatformTruncationLimit(id), 512_000, `${id} 必须映射为 512K`);
+  }
+  // Orchestrator (Argon) -> 512,000
   for (const id of ['MODEL_PLACEHOLDER_M667', 'MODEL_PLACEHOLDER_M668', 'gemini-pro-orchestrator-g1-pro', 'Orchestrator (Argon)']) {
-    assert.equal(getPlatformTruncationLimit(id), 256_000, `${id} 必须映射为 256K`);
+    assert.equal(getPlatformTruncationLimit(id), 512_000, `${id} 必须映射为 512K`);
     assert.equal(isKnownModel(id), true, `${id} 必须识别为已知模型`);
   }
-  // Gemini 4 Carbon -> 256,000
-  for (const id of ['MODEL_PLACEHOLDER_M670', 'gemini-4-carbon-disabled', 'gemini-4-carbon-low', 'gemini-4-carbon-medium', 'gemini-4-carbon-high']) {
-    assert.equal(getPlatformTruncationLimit(id), 256_000, `${id} 必须映射为 256K`);
+  // Gemini 4 Carbon -> 512,000
+  for (const id of ['MODEL_PLACEHOLDER_M670', 'gemini-4-carbon-disabled', 'gemini-4-carbon-low', 'gemini-4-carbon-medium', 'gemini-4-carbon-high', 'gemini-4-carbon-extra']) {
+    assert.equal(getPlatformTruncationLimit(id), 512_000, `${id} 必须映射为 512K`);
     assert.equal(isKnownModel(id), true, `${id} 必须识别为已知模型`);
   }
   // Gemini 3.8 Flash High -> 256,000 (256k)
@@ -100,7 +104,7 @@ test('getPlatformTruncationLimit: 严格映射平台真实截断阈值', () => {
   assert.equal(getPlatformTruncationLimit('CUSTOM_MODEL', { 'CUSTOM_MODEL': 128_000 }), 128_000);
   assert.equal(
     getPlatformTruncationLimit('future-hydrogen-tier', {}, new Map([['future-hydrogen-tier', 'MODEL_PLACEHOLDER_M525']])),
-    256_000
+    512_000
   );
   assert.equal(MODEL_ID_ALIASES['claude-opus-5-5-max'], 'MODEL_PLACEHOLDER_M402');
   assert.equal(normalizeModelLookupKey('Gemini 4 Hydrogen (Medium) (Unavailable)'), 'gemini-4-hydrogen-medium');
@@ -486,8 +490,8 @@ test('processTrajectorySteps [审查加固]: 长会话被截断时必须显式�
   assert.equal(result.isTruncated, true);
 });
 
-test('processTrajectorySteps: Hydrogen 256K / GPT-OSS 80K 真实截断线与 runtimeMaxContextTokens 校准及防串切保护', () => {
-  // 1. Gemini 4 Hydrogen (线上默认 256K): 128,000 Tokens 占 50%，256,000 Tokens 触发超限
+test('processTrajectorySteps: Hydrogen 512K / GPT-OSS 80K 真实截断线与 runtimeMaxContextTokens 校准及防串切保护', () => {
+  // 1. Gemini 4 Hydrogen (2026-11 平台放开至 512K): 128,000 Tokens 占 25%
   const hydrogenRes = processTrajectorySteps([
     {
       type: StepType.CHECKPOINT,
@@ -502,9 +506,9 @@ test('processTrajectorySteps: Hydrogen 256K / GPT-OSS 80K 真实截断线与 run
       }
     }
   ]);
-  assert.equal(hydrogenRes.contextLimit, 256_000);
+  assert.equal(hydrogenRes.contextLimit, 512_000);
   assert.equal(hydrogenRes.contextUsed, 128_000);
-  assert.equal(hydrogenRes.usageRatio, 0.5);
+  assert.equal(hydrogenRes.usageRatio, 0.25);
   assert.equal(hydrogenRes.isOverLimit, false);
 
   // 2. GPT-OSS 120B (80K): 80,000 Tokens 触发 isOverLimit
@@ -536,7 +540,7 @@ test('processTrajectorySteps: Hydrogen 256K / GPT-OSS 80K 真实截断线与 run
   assert.equal(emptyAliasRes.contextLimit, 80_000);
   assert.equal(emptyAliasRes.isUnknownModel, false);
 
-  // 4. runtimeMaxContextTokens 运行时动态覆盖（如远端实验放开 Hydrogen 到 512K 或 840K，同族切换生效）
+  // 4. runtimeMaxContextTokens 运行时动态覆盖（如远端实验放开 Hydrogen 到 1M，或灰度压回 256K，同族切换双向生效）
   const runtimeOverrideRes = processTrajectorySteps([
     {
       stepIndex: 0,
@@ -549,7 +553,7 @@ test('processTrajectorySteps: Hydrogen 256K / GPT-OSS 80K 真实截断线与 run
       metadata: {
         modelUsage: {
           model: 'MODEL_PLACEHOLDER_M525',
-          inputTokens: 256_000,
+          inputTokens: 500_000,
           outputTokens: 0,
           cacheReadTokens: 0,
           cacheCreationTokens: 0,
@@ -557,10 +561,10 @@ test('processTrajectorySteps: Hydrogen 256K / GPT-OSS 80K 真实截断线与 run
       }
     }
   ], {
-    runtimeMaxContextTokens: 512_000,
+    runtimeMaxContextTokens: 1_000_000,
     runtimeContextModel: 'MODEL_PLACEHOLDER_M525',
   });
-  assert.equal(runtimeOverrideRes.contextLimit, 512_000, '同族 Hydrogen 模型必须采纳运行时下发的 512K 上限');
+  assert.equal(runtimeOverrideRes.contextLimit, 1_000_000, '同族 Hydrogen 模型必须采纳运行时下发的 1M 上限');
   assert.equal(runtimeOverrideRes.usageRatio, 0.5);
   assert.equal(runtimeOverrideRes.isOverLimit, false);
 
@@ -618,15 +622,23 @@ test('processTrajectorySteps: Hydrogen 256K / GPT-OSS 80K 真实截断线与 run
 });
 
 test('model-limits: 新内部模型别名、容量角标后缀剥离、Claude 4 (160K) 与 dynamicLimits 四级优先级验证', () => {
-  // 1. 内部流转别名与 UI Extra / 1M 后缀完整映射为 256K 且精确编目
+  // 1a. Gemini 4 内部流转别名与 UI Extra 后缀映射为 512K 且精确编目
   for (const id of [
     'gemini-4-argon-trial',
+    'gemini-4-hydrogen-extra',
+    'Gemini 4 Hydrogen (Extra) 新',
+  ]) {
+    assert.equal(getPlatformTruncationLimit(id), 512_000, `${id} 必须映射为 512K`);
+    assert.equal(isKnownModel(id), true, `${id} 必须识别为已知模型`);
+    assert.equal(isCatalogedModel(id), true, `${id} 必须识别为已编目模型`);
+  }
+
+  // 1b. Flash / Worker / Claude 5.5 别名与 UI 1M/256K 角标剥离映射为 256K 且精确编目
+  for (const id of [
     'gemini-flash-worker-agy',
     'Gemini Flash',
     'gemini-3.8-flash-tiered',
     'gemini-3.5-flash-lite',
-    'gemini-4-hydrogen-extra',
-    'Gemini 4 Hydrogen (Extra) 新',
     'Claude Opus 5.5 Extra · 1M',
     'Claude Sonnet 5.5 (Extra) · 256K',
     'Claude Opus 5.5 (High) (1M)',
@@ -799,15 +811,24 @@ test('processTrajectorySteps: Orchestrator (Argon) (M668 <-> M669) 双模型交�
     },
   ];
 
-  // 1. 处于 M669 执行步时：selectedModel 仍保持 M668，且允许 M669 尾游标校准分母
+  // 1. 处于 M669 执行步时：selectedModel 仍保持 M668；
+  //    若 M669 尾游标报告较小值 (256K)，不得向下压扁主规划模型 M668 (512K)；
+  //    若 M669 尾游标报告更高放开值 (如 900K)，则同步升级分母
+  const partnerSmallerRes = processTrajectorySteps(orchSteps, {
+    runtimeMaxContextTokens: 256_000,
+    runtimeContextModel: 'MODEL_PLACEHOLDER_M669',
+  });
+  assert.equal(partnerSmallerRes.selectedModel, 'MODEL_PLACEHOLDER_M668', 'M669 执行子模型严禁篡改主模型 M668');
+  assert.equal(partnerSmallerRes.contextLimit, 512_000, 'M669 较低限额 (256K) 不得向下压低主模型 M668 的 512K 分母');
+
   const midExecRes = processTrajectorySteps(orchSteps, {
-    runtimeMaxContextTokens: 512_000,
+    runtimeMaxContextTokens: 900_000,
     runtimeContextModel: 'MODEL_PLACEHOLDER_M669',
   });
   assert.equal(midExecRes.selectedModel, 'MODEL_PLACEHOLDER_M668', 'M669 执行子模型严禁篡改主模型 M668');
   assert.equal(midExecRes.executionModel, 'MODEL_PLACEHOLDER_M669');
   assert.equal(midExecRes.checkpointModel, 'MODEL_PLACEHOLDER_M669');
-  assert.equal(midExecRes.contextLimit, 512_000, 'M669 尾游标必须被识别为 M668 的兼容搭档并成功校准分母');
+  assert.equal(midExecRes.contextLimit, 900_000, 'M669 尾游标若上报更高上限 (900K) 应被识别为 M668 兼容搭档并升级分母');
   assert.equal(midExecRes.compressionDetected, false);
 
   // 2. 从 M669 (180K input) 切回 M668 (40K input) 时发生压缩断崖：必须准确捕获压缩

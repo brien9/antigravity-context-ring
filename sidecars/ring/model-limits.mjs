@@ -1,42 +1,42 @@
 // 平台上下文压缩截断阈值定义（真实平台限制，而非模型原生窗口大小）
 export const PLATFORM_CONTEXT_LIMITS = {
-  // Gemini 4 Argon (256K)
-  'MODEL_PLACEHOLDER_M417': 256_000, // High (gemini-4-argon-high)
-  'MODEL_PLACEHOLDER_M418': 256_000, // Medium (gemini-4-argon-medium)
-  'MODEL_PLACEHOLDER_M419': 256_000, // Low (gemini-4-argon-low)
-  // Gemini 4 Hydrogen (静态离线 snapshotmendelfp 为 512K，但线上 AICode Mendel 远端策略统一压在 256K；若未来放开由运行时 maxContextTokens 动态覆盖)
-  'MODEL_PLACEHOLDER_M525': 256_000, // High (gemini-4-hydrogen-high)
-  'MODEL_PLACEHOLDER_M526': 256_000, // Medium (gemini-4-hydrogen-medium)
-  'MODEL_PLACEHOLDER_M527': 256_000, // Low (gemini-4-hydrogen-low)
-  'MODEL_PLACEHOLDER_M528': 256_000, // XHigh (gemini-4-hydrogen-xhigh)
-  'MODEL_PLACEHOLDER_M529': 256_000,
-  'MODEL_PLACEHOLDER_M432': 256_000, // Canonical Hydrogen
-  'MODEL_PLACEHOLDER_M433': 256_000, // Canonical Hydrogen
-  'MODEL_PLACEHOLDER_M434': 256_000, // Canonical Hydrogen
-  // Orchestrator (Argon) (256K)
-  'MODEL_PLACEHOLDER_M667': 256_000, // Canonical Orchestrator (Argon)
-  'MODEL_PLACEHOLDER_M668': 256_000, // Orchestrator (Argon) (gemini-pro-orchestrator-g1-pro)
-  // Gemini 4 Carbon (256K)
-  'MODEL_PLACEHOLDER_M670': 256_000, // Gemini 4 Carbon (gemini-4-carbon)
-  // 内部 M408 家族 (256K)
-  'MODEL_PLACEHOLDER_M408': 256_000,
-  'MODEL_PLACEHOLDER_M409': 256_000,
-  'MODEL_PLACEHOLDER_M410': 256_000,
-  'MODEL_PLACEHOLDER_M411': 256_000,
-  'MODEL_PLACEHOLDER_M412': 256_000,
-  'MODEL_PLACEHOLDER_M413': 256_000,
-  'MODEL_PLACEHOLDER_M420': 256_000,
-  'MODEL_PLACEHOLDER_M421': 256_000,
-  'MODEL_PLACEHOLDER_M422': 256_000,
-  'MODEL_PLACEHOLDER_M423': 256_000,
-  'MODEL_PLACEHOLDER_M424': 256_000,
-  'MODEL_PLACEHOLDER_M427': 256_000,
-  'MODEL_PLACEHOLDER_M428': 256_000,
-  'MODEL_PLACEHOLDER_M429': 256_000,
-  'MODEL_PLACEHOLDER_M430': 256_000,
-  'MODEL_PLACEHOLDER_M431': 256_000,
-  'MODEL_PLACEHOLDER_M437': 256_000,
-  'MODEL_PLACEHOLDER_M438': 256_000,
+  // Gemini 4 Argon (512K - 2026-11 Antigravity 平台侧翻倍放开)
+  'MODEL_PLACEHOLDER_M417': 512_000, // High (gemini-4-argon-high)
+  'MODEL_PLACEHOLDER_M418': 512_000, // Medium (gemini-4-argon-medium)
+  'MODEL_PLACEHOLDER_M419': 512_000, // Low (gemini-4-argon-low)
+  // Gemini 4 Hydrogen (512K - 2026-11 Antigravity 平台侧翻倍放开，支持运行时 maxContextTokens 动态覆盖)
+  'MODEL_PLACEHOLDER_M525': 512_000, // High (gemini-4-hydrogen-high)
+  'MODEL_PLACEHOLDER_M526': 512_000, // Medium (gemini-4-hydrogen-medium)
+  'MODEL_PLACEHOLDER_M527': 512_000, // Low (gemini-4-hydrogen-low)
+  'MODEL_PLACEHOLDER_M528': 512_000, // XHigh / Extra (gemini-4-hydrogen-xhigh / gemini-4-hydrogen-extra)
+  'MODEL_PLACEHOLDER_M529': 512_000,
+  'MODEL_PLACEHOLDER_M432': 512_000, // Canonical Hydrogen
+  'MODEL_PLACEHOLDER_M433': 512_000, // Canonical Hydrogen
+  'MODEL_PLACEHOLDER_M434': 512_000, // Canonical Hydrogen
+  // Orchestrator (Argon) (512K - 随 Argon 家族翻倍)
+  'MODEL_PLACEHOLDER_M667': 512_000, // Canonical Orchestrator (Argon)
+  'MODEL_PLACEHOLDER_M668': 512_000, // Orchestrator (Argon) (gemini-pro-orchestrator-g1-pro)
+  // Gemini 4 Carbon (512K - 2026-11 Antigravity 平台侧翻倍放开)
+  'MODEL_PLACEHOLDER_M670': 512_000, // Gemini 4 Carbon (gemini-4-carbon)
+  // 内部 M408 家族 (归属 Gemini 4 Argon 族，512K)
+  'MODEL_PLACEHOLDER_M408': 512_000,
+  'MODEL_PLACEHOLDER_M409': 512_000,
+  'MODEL_PLACEHOLDER_M410': 512_000,
+  'MODEL_PLACEHOLDER_M411': 512_000,
+  'MODEL_PLACEHOLDER_M412': 512_000,
+  'MODEL_PLACEHOLDER_M413': 512_000,
+  'MODEL_PLACEHOLDER_M420': 512_000,
+  'MODEL_PLACEHOLDER_M421': 512_000,
+  'MODEL_PLACEHOLDER_M422': 512_000,
+  'MODEL_PLACEHOLDER_M423': 512_000,
+  'MODEL_PLACEHOLDER_M424': 512_000,
+  'MODEL_PLACEHOLDER_M427': 512_000,
+  'MODEL_PLACEHOLDER_M428': 512_000,
+  'MODEL_PLACEHOLDER_M429': 512_000,
+  'MODEL_PLACEHOLDER_M430': 512_000,
+  'MODEL_PLACEHOLDER_M431': 512_000,
+  'MODEL_PLACEHOLDER_M437': 512_000,
+  'MODEL_PLACEHOLDER_M438': 512_000,
   // Gemini 3.8 Flash (256K)
   'MODEL_PLACEHOLDER_M317': 256_000,
   'MODEL_PLACEHOLDER_M318': 256_000, // High (gemini-3.8-flash-high)
@@ -101,6 +101,8 @@ export const MODEL_ID_ALIASES = {
   'gemini-4-argon-high': 'MODEL_PLACEHOLDER_M417',
   'gemini-4-argon-medium': 'MODEL_PLACEHOLDER_M418',
   'gemini-4-argon-low': 'MODEL_PLACEHOLDER_M419',
+  'gemini-4-argon-xhigh': 'MODEL_PLACEHOLDER_M417',
+  'gemini-4-argon-extra': 'MODEL_PLACEHOLDER_M417',
   'gemini-4-argon-trial': 'MODEL_PLACEHOLDER_M418',
   'gemini-4-hydrogen': 'MODEL_PLACEHOLDER_M525',
   'gemini-4-hydrogen-high': 'MODEL_PLACEHOLDER_M525',
@@ -117,6 +119,8 @@ export const MODEL_ID_ALIASES = {
   'gemini-4-carbon-low': 'MODEL_PLACEHOLDER_M670',
   'gemini-4-carbon-medium': 'MODEL_PLACEHOLDER_M670',
   'gemini-4-carbon-high': 'MODEL_PLACEHOLDER_M670',
+  'gemini-4-carbon-xhigh': 'MODEL_PLACEHOLDER_M670',
+  'gemini-4-carbon-extra': 'MODEL_PLACEHOLDER_M670',
   'gemini-4-carbon-disabled': 'MODEL_PLACEHOLDER_M670',
   'gemini-3.8-flash': 'MODEL_PLACEHOLDER_M319',
   'gemini-3.8-flash-high': 'MODEL_PLACEHOLDER_M318',
@@ -538,4 +542,32 @@ export function isPlanExecutePartnerModel(modelA = '', modelB = '', dynamicAlias
 export function isCompatibleRuntimeModel(modelA = '', modelB = '', dynamicAliases = null) {
   if (isSameModelFamily(modelA, modelB, dynamicAliases)) return true;
   return isPlanExecutePartnerModel(modelA, modelB, dynamicAliases);
+}
+
+/**
+ * 判断运行态尾游标 maxContextTokens 是否应覆盖当前解析出的容量上限：
+ * - 同模型族或任一侧缺少模型标识时：运行态权威值全权覆盖（同时支持放开与收紧）
+ * - 异构 Plan-Execute 搭档（如 M668 ⇄ M669）交叉时：仅在运行态限额不低于当前主分母时采纳，
+ *   防止较低配额的执行子模型（如 Flash 256K）向下压低主规划模型（如 Argon 512K）造成分母抖动
+ */
+export function shouldApplyRuntimeLimit(
+  capacityModel = '',
+  runtimeModel = '',
+  currentLimit = 0,
+  runtimeLimit = 0,
+  dynamicAliases = null
+) {
+  if (!Number.isSafeInteger(runtimeLimit) || runtimeLimit <= 0) {
+    return false;
+  }
+  if (!runtimeModel || !capacityModel) {
+    return true;
+  }
+  if (isSameModelFamily(capacityModel, runtimeModel, dynamicAliases)) {
+    return true;
+  }
+  if (isPlanExecutePartnerModel(capacityModel, runtimeModel, dynamicAliases)) {
+    return !(Number.isFinite(currentLimit) && currentLimit > 0) || runtimeLimit >= currentLimit;
+  }
+  return false;
 }

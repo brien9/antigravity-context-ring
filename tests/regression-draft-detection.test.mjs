@@ -233,7 +233,7 @@ test('【最终封板 2】实机首页：Fiber state.conversationId 为 "" 或 u
     installAgContextRingWidget();
     await new Promise((r) => setTimeout(r, 40));
     const tip = h.getShadowText('tooltip-text');
-    assert.match(tip, /^新会话 · 0\.0K \/ 256\.0K 上下文未占用/);
+    assert.match(tip, /^新会话 · 0\.0K \/ 512\.0K 上下文未占用/);
   } finally {
     h.cleanup();
   }
@@ -1529,6 +1529,157 @@ test('【最终封板 16】/btw 草稿态方案 A（预显示继承父会话基�
     assert.equal(h3.getSideTip(), '新会话 · 0.0K / 80.0K 上下文未占用', '多主窗格且无 Fiber parentCascadeId 时绝不盲猜父会话');
   } finally {
     h3.cleanup();
+  }
+});
+
+test('【模型同步增强】setCachedSnapshot 仅对同族 UI 展示名联动写入 dynamicModelLimits，严禁跨模型下拉污染', async () => {
+  const { inferClientModelLimit, clearClientModelLimits } = installAgContextRingWidget;
+  const CID_HIST = '77778888-1111-2222-3333-444455556666';
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => store.get(k) ?? null,
+    setItem: (k, v) => store.set(k, v),
+    removeItem: (k) => store.delete(k)
+  };
+
+  let currentModelText = 'Gemini 4 Hydrogen 新锐版';
+  const shadowMap = new Map();
+  for (const id of ['ring-bar', 'tooltip-text', 'context-ring', 'ring-container', 'tooltip']) {
+    shadowMap.set(id, {
+      id,
+      style: {},
+      textContent: '',
+      hidden: true,
+      classList: { add() {}, remove() {} },
+      addEventListener() {},
+      removeEventListener() {},
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 18, height: 18 })
+    });
+  }
+  const mockBody = { isConnected: true, parentElement: null };
+  const flexContainer = {
+    isConnected: true,
+    insertedNodes: [],
+    contains(n) { return this.insertedNodes.includes(n); },
+    insertBefore(n) { if (!this.insertedNodes.includes(n)) this.insertedNodes.push(n); }
+  };
+  const provider = {
+    getState: () => ({ conversationId: CID_HIST, trajectorySlice: { totalStepsLength: 5 } }),
+    onDidChange: () => () => {}
+  };
+  const box = {
+    isConnected: true,
+    __reactFiber$learn: { memoizedProps: { cascadeContext: { state: { agentStateProvider: provider } } } },
+    getClientRects: () => [{ width: 400, height: 100 }],
+    closest: () => null,
+    contains: () => true
+  };
+  const modelEl = {
+    isConnected: true,
+    parentElement: flexContainer,
+    get textContent() { return currentModelText; },
+    getAttribute: () => '',
+    getClientRects: () => [{ width: 90, height: 24 }],
+    closest: (sel) => sel.includes('agent-input-box') ? box : (sel.includes('flex-1') ? flexContainer : null)
+  };
+  const editorEl = {
+    isConnected: true,
+    getClientRects: () => [{ width: 380, height: 60 }],
+    addEventListener() {},
+    removeEventListener() {},
+    closest: (sel) => sel.includes('agent-input-box') ? box : null
+  };
+
+  let mutationCb = null;
+  globalThis.location = { pathname: `/c/${CID_HIST}` };
+  globalThis.window = {
+    top: null,
+    innerWidth: 1440,
+    __agContextRingHost: {
+      getSnapshot: async () => ({
+        ready: true,
+        cid: CID_HIST,
+        conversationId: CID_HIST,
+        selectedModel: 'MODEL_PLACEHOLDER_M528',
+        used: 90_000,
+        limit: 900_000,
+        ratio: 0.1,
+        percent: '10.0%',
+        usedK: '90.0K',
+        limitK: '900.0K',
+        isEstimated: false,
+        isUnknownModel: false,
+        tooltip: '10.0% · 90.0K / 900.0K 上下文已使用'
+      })
+    },
+    addEventListener() {},
+    removeEventListener() {}
+  };
+  globalThis.window.top = globalThis.window;
+  globalThis.document = {
+    documentElement: {},
+    body: mockBody,
+    hidden: false,
+    activeElement: editorEl,
+    addEventListener() {},
+    removeEventListener() {},
+    querySelector: () => box,
+    querySelectorAll: (sel) => {
+      if (sel.includes('contenteditable')) return [editorEl];
+      if (sel.includes('model-selector-trigger')) return [modelEl];
+      return [];
+    },
+    createElement: () => ({
+      id: '',
+      style: {},
+      isConnected: true,
+      previousElementSibling: modelEl,
+      addEventListener() {},
+      remove() { this.isConnected = false; },
+      attachShadow: () => ({
+        innerHTML: '',
+        getElementById: (id) => shadowMap.get(id),
+        querySelector: () => ({ style: {} })
+      })
+    })
+  };
+  globalThis.getComputedStyle = () => ({ visibility: 'visible' });
+  globalThis.MutationObserver = class {
+    constructor(cb) { mutationCb = cb; }
+    observe() {}
+    disconnect() {}
+  };
+
+  try {
+    clearClientModelLimits();
+    installAgContextRingWidget();
+    await new Promise((r) => setTimeout(r, 50));
+
+    // 1. 同族 UI 展示名 "Gemini 4 Hydrogen 新锐版" 自动从 M528 快照学到 900K
+    assert.equal(
+      inferClientModelLimit('Gemini 4 Hydrogen 新锐版'),
+      900_000,
+      '同族 UI 展示名应与快照权威限额联动写入 dynamicModelLimits'
+    );
+
+    // 2. 用户在历史会话临时切换下拉框到异族 GPT-OSS 120B 并触发同步：绝不得把 900K 污染给 GPT-OSS
+    currentModelText = 'GPT-OSS 120B (Medium)';
+    mutationCb?.();
+    await new Promise((r) => setTimeout(r, 180));
+    assert.equal(
+      inferClientModelLimit('GPT-OSS 120B (Medium)'),
+      80_000,
+      '异族 UI 下拉切换绝不得被历史会话的 900K 限额反向污染'
+    );
+  } finally {
+    globalThis.window?.__agContextRingDispose?.();
+    clearClientModelLimits();
+    delete globalThis.location;
+    delete globalThis.window;
+    delete globalThis.document;
+    delete globalThis.localStorage;
+    delete globalThis.getComputedStyle;
+    delete globalThis.MutationObserver;
   }
 });
 
