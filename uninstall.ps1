@@ -89,6 +89,30 @@ if (Test-Path $targetDir) {
     exit 1
 }
 
+# 4. 非测试模式下，还原桌面与开始菜单快捷方式中的 --remote-debugging-port=0
+if (-not $CustomTargetDir) {
+    try {
+        $shortcutPaths = @(
+            (Join-Path $homeDir "Desktop\Antigravity.lnk"),
+            (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Antigravity.lnk"),
+            (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Antigravity\Antigravity.lnk")
+        )
+        $wshShell = New-Object -ComObject WScript.Shell
+        foreach ($scPath in $shortcutPaths) {
+            if (Test-Path $scPath) {
+                try {
+                    $sc = $wshShell.CreateShortcut($scPath)
+                    $argsStr = [string]$sc.Arguments
+                    if ($argsStr -match '--remote-debugging-port=0') {
+                        $sc.Arguments = (($argsStr -replace '(?:^|\s)--remote-debugging-port=0(?=\s|$)', ' ').Trim())
+                        $sc.Save()
+                    }
+                } catch {}
+            }
+        }
+    } catch {}
+}
+
 Write-Host "------------------------------------------" -ForegroundColor Green
 Write-Host "[SUCCESS] Plugin uninstalled successfully!" -ForegroundColor Green
 Write-Host "Note: Restart Antigravity to restore clean default UI." -ForegroundColor Cyan

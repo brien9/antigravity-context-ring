@@ -5,7 +5,7 @@
 **专为 Google Antigravity 桌面客户端 (Antigravity App) 打造的原生级行内上下文长度监控圆环**  
 *Native inline context telemetry for Google Antigravity Desktop App. Zero-invasion, RPC ground-truth, 0ms instant switch.*
 
-[![Release](https://img.shields.io/badge/Release-v1.1.1-10b981?style=flat-square&logo=github)](https://github.com/brien9/antigravity-context-ring/releases)
+[![Release](https://img.shields.io/badge/Release-v1.1.2-10b981?style=flat-square&logo=github)](https://github.com/brien9/antigravity-context-ring/releases)
 [![Host](https://img.shields.io/badge/Host-Google%20Antigravity-4285f4?style=flat-square&logo=google&logoColor=white)](#)
 [![Platforms](https://img.shields.io/badge/Platforms-Win%20%7C%20macOS%20%7C%20Linux-334155?style=flat-square)](#)
 
@@ -129,8 +129,8 @@ flowchart TD
 ```
 
 * **纯硬件级 RPC 快照（零字符猜测）**：遵循成熟 Harness 规范，直接从底层 Language Server 提取 `modelUsage` 结构，完整纳入输入、输出、`cacheReadTokens` 与 `cacheCreationTokens`。
-* **三层模型解耦与 Plan-Execute 协同**：严格区分 `selectedModel`（UI 主选模型，唯一决定分母）、`executionModel`（当前步骤执行模型）与 `checkpointModel`（快照落盘模型）。既能根除普通 Subagent 临时调用轻量模型导致的进度条失真，也能精准识别 `Orchestrator (Argon)`（Plan `M668` ⇄ Execute 执行模型 `M669`）的同会话协同关系——锁住主分母不被执行模型篡改，同时允许执行步尾游标继续校准分母并准确捕获跨模型 `CHECKPOINT` 压缩；对 0 `USER_INPUT` 的 Swarm Worker 轨迹则结合 `SYSTEM_MESSAGE` 首轮估算与首个权威快照自动重锚定。
-* **多级物理阈值与免维护动态自学习闭环**：基于 Language Server `model_profiles` 与实机 `CHECKPOINT` 触发点锁定真实分母——**Gemini 4 Hydrogen / Gemini 4 Argon / Orchestrator (Argon) / Gemini 4 Carbon 512K (512,000)**（随 2026-11 Antigravity 平台侧 Gemini 4 翻倍更新同步升级；`Orchestrator` 与执行伙伴 `M669` 协同时自动保护主规划模型不被低配额子执行步压低分母）、**Gemini 3.8 Flash / Claude Opus & Sonnet 5.5 256K (256,000)**（Claude 5.5 命中 `claude-1m_840k` 等实验分支时按实测上限校准）、**Legacy M26/M35 & Claude 4 160K**、**Gemini 2.5 128K**、**GPT-OSS 120B 80K (80,000)**。通过尾游标 RPC `GetCascadeTrajectoryGeneratorMetadata` 读取运行态 `maxContextTokens` 与 `GetUserStatus`（兼容 `GetCascadeModelConfigData`）动态同步模型目录，将学到的限额与别名随快照透传并持久化至前端 `localStorage`（含同族 UI 展示名联动学习），让草稿态与新模型无需手动更新静态表即可全自动对齐。
+* **三层模型解耦与 Plan-Execute 协同**：严格区分 `selectedModel`（UI 主选模型，唯一决定分母）、`executionModel`（当前步骤执行模型）与 `checkpointModel`（快照落盘模型）。既能根除普通 Subagent 临时调用轻量模型导致的进度条失真，也能精准识别 `Orchestrator (Neon / Argon)`（Plan `M537` / `M668` ⇄ Execute 执行模型 `M669`）的同会话协同关系——锁住主分母不被执行模型篡改，同时允许执行步尾游标继续校准分母并准确捕获跨模型 `CHECKPOINT` 压缩；对 0 `USER_INPUT` 的 Swarm Worker 轨迹则结合 `SYSTEM_MESSAGE` 首轮估算与首个权威快照自动重锚定。
+* **多级物理阈值与免维护动态自学习闭环**：基于 Language Server `model_profiles` 与实机 `CHECKPOINT` 触发点锁定真实分母——**Gemini 4 Neon / Gemini 4 Hydrogen / Gemini 4 Argon / Orchestrator (Neon / Argon) / Gemini 4 Carbon 512K (512,000)**（随 2026-11 Antigravity 平台侧 Gemini 4 翻倍更新同步升级；`Orchestrator` 与执行伙伴 `M669` 协同时自动保护主规划模型不被低配额子执行步压低分母）、**Gemini 3.8 Flash / Claude Opus & Sonnet 5.5 256K (256,000)**（Claude 5.5 命中 `claude-1m_840k` 等实验分支时按实测上限校准）、**Legacy M26/M35 & Claude 4 160K**、**Gemini 2.5 128K**、**GPT-OSS 120B 80K (80,000)**。通过尾游标 RPC `GetCascadeTrajectoryGeneratorMetadata` 读取运行态 `maxContextTokens` 与 `GetUserStatus`（兼容 `GetCascadeModelConfigData`）动态同步模型目录，将学到的限额与别名随快照透传并持久化至前端 `localStorage`（含同族 UI 展示名联动学习），让草稿态与新模型无需手动更新静态表即可全自动对齐。
 * **双阶 SWR 与 Never-Reset 防线**：内置 50 会话内存 LRU + 100 会话 LocalStorage 持久化快照。切换历史会话 0ms 渲染有效快照并后台静默校准；遇到窗口重载或 Language Server 偶发重启时，强制锁死最后一帧有效状态，绝不闪烁归零。
 * **权威总步数 + 尾部窗口与重载自愈**：突破单次 RPC 查询的 1000 步限制，超过 5000 步时读取权威 `stepCount` 并聚焦最新 5000 步，确保当前 Checkpoint 不被旧前缀遮蔽；同时精确过滤 `data:` / `about:blank` / `plugin:` 等非应用 CDP Target，监听 `Runtime.executionContextCreated` 实现重载 0ms 瞬时重注，并优先通过宿主环境变量实现零进程扫描直连。
 
@@ -147,7 +147,7 @@ flowchart TD
 <details>
 <summary><strong>Q2: 多 Agent（Subagent / Swarm）、/btw 侧边提问或多分屏编码时，如何避免进度条跳变与串台？</strong></summary>
 
-> **A**: Context Ring 在前后端双向落实了**模型三层解耦**与**作用域隔离状态树**。分母容量严格由主选模型锁定，对 `Orchestrator (Argon)` 在 Plan（`M668`）与 Execution（`M669`）间双模型协同的场景也能锁死主分母并不断档追踪压缩；在前端，`Map<box, PaneRingInstance>` 严格区分主窗格、`/btw` 侧边提问（`sideQuestionView`）与右侧 Subagent / Swarm Worker 标签页（`subagentView`），在无模型按钮视图下通过 React Fiber `selectedModel` 直读模型提示，彻底杜绝串台与误判。
+> **A**: Context Ring 在前后端双向落实了**模型三层解耦**与**作用域隔离状态树**。分母容量严格由主选模型锁定，对 `Orchestrator (Neon / Argon)` 在 Plan（`M537` / `M668`）与 Execution（`M669`）间双模型协同的场景也能锁死主分母并不断档追踪压缩；在前端，`Map<box, PaneRingInstance>` 严格区分主窗格、`/btw` 侧边提问（`sideQuestionView`）与右侧 Subagent / Swarm Worker 标签页（`subagentView`），在无模型按钮视图下通过 React Fiber `selectedModel` 直读模型提示，彻底杜绝串台与误判。
 </details>
 
 <details>

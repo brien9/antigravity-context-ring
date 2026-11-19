@@ -1683,4 +1683,17 @@ test('【模型同步增强】setCachedSnapshot 仅对同族 UI 展示名联动�
   }
 });
 
+test('【前端 v2.33 模型对齐】inferClientModelLimit 与 resolveClientModelFamily 支持 Gemini 4 Neon 与 Orchestrator (Neon)', () => {
+  const { inferClientModelLimit, resolveClientModelFamily, clearClientModelLimits } = installAgContextRingWidget;
+  clearClientModelLimits();
+  assert.equal(inferClientModelLimit('Gemini 4 Neon (Medium)'), 512_000);
+  assert.equal(inferClientModelLimit('MODEL_PLACEHOLDER_M533'), 512_000);
+  assert.equal(inferClientModelLimit('Orchestrator (Neon)'), 512_000);
+  assert.equal(inferClientModelLimit('MODEL_PLACEHOLDER_M537'), 512_000);
+  assert.equal(resolveClientModelFamily('Gemini 4 Neon (Medium)'), 'neon');
+  assert.equal(resolveClientModelFamily('MODEL_PLACEHOLDER_M533'), 'neon');
+  assert.equal(resolveClientModelFamily('Orchestrator (Neon)'), 'orchestrator');
+  assert.equal(resolveClientModelFamily('MODEL_PLACEHOLDER_M537'), 'orchestrator');
+});
+
 

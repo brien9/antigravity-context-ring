@@ -1475,5 +1475,49 @@ test('【Orchestrator 搭档防护】M668 主会话遇到 M669 (256K) 执行尾�
   clearDynamicModelCatalog();
 });
 
+test('【GetUserStatus 防兜底污染】未携带显式限额且未在静态表编目的新模型，绝不把 256K 兜底值写入 modelLimits', async () => {
+  clearDynamicModelCatalog();
+  const testCid = 'mock-no-default-limit-pollution';
+  const steps = [
+    {
+      stepIndex: 0,
+      type: StepType.USER_INPUT,
+      userInput: {
+        userResponse: 'hello',
+        userConfig: { plannerConfig: { planModel: 'MODEL_PLACEHOLDER_M901' } }
+      }
+    }
+  ];
+
+  async function mockRpc(_target, method) {
+    if (method === 'GetCascadeTrajectorySteps') {
+      return { steps };
+    }
+    if (method === 'GetUserStatus') {
+      return {
+        userStatus: {
+          cascadeModelConfigData: {
+            clientModelConfigs: [
+              {
+                modelId: 'future-brand-new-model',
+                label: 'Future Brand New Model',
+                modelOrAlias: { model: 'MODEL_PLACEHOLDER_M901' }
+              }
+            ]
+          }
+        }
+      };
+    }
+    return {};
+  }
+
+  const snap = await getContextSnapshot(testCid, true, { _ls: { port: 9999 }, _rpcCall: mockRpc });
+  assert.equal(snap.isUnknownModel, false, '应消除 isUnknownModel 告警');
+  assert.equal(snap.limit, 256_000, '未获取远端限额时运行时回退 256K 展示');
+  assert.equal(snap.modelLimits?.['MODEL_PLACEHOLDER_M901'], undefined, '绝不能将 256K 默认兜底写入 dynamicModelCatalog.limits');
+  assert.equal(snap.modelLimits?.['future-brand-new-model'], undefined);
+  clearDynamicModelCatalog();
+});
+
 
 

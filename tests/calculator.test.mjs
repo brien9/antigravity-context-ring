@@ -854,3 +854,26 @@ test('processTrajectorySteps: Orchestrator (Argon) (M668 <-> M669) 双模型交�
   assert.equal(compressedRes.compressionDrop, 140_000);
   assert.equal(compressedRes.contextUsed, 40_800);
 });
+
+test('Gemini 4 Neon 与 Orchestrator (Neon): 512K 阈值、编目识别及 M669 Plan-Execute 协同保护', () => {
+  for (const id of [
+    'MODEL_PLACEHOLDER_M532',
+    'MODEL_PLACEHOLDER_M533',
+    'MODEL_PLACEHOLDER_M534',
+    'MODEL_PLACEHOLDER_M535',
+    'gemini-4-neon-medium',
+    'Gemini 4 Neon (High)',
+    'MODEL_PLACEHOLDER_M537',
+    'gemini-pro-orchestrator-neon',
+    'Orchestrator (Neon)'
+  ]) {
+    assert.equal(getPlatformTruncationLimit(id), 512_000, `${id} 必须映射为 512K`);
+    assert.equal(isKnownModel(id), true, `${id} 必须被识别为已知模型`);
+    assert.equal(isCatalogedModel(id), true, `${id} 必须已完成精确编目`);
+  }
+  assert.equal(resolveModelFamilyKey('MODEL_PLACEHOLDER_M533'), 'FAMILY_NEON');
+  assert.equal(resolveModelFamilyKey('MODEL_PLACEHOLDER_M537'), 'FAMILY_ORCHESTRATOR');
+  assert.equal(isSameModelFamily('MODEL_PLACEHOLDER_M533', 'Gemini 4 Neon (High)'), true);
+  assert.equal(isPlanExecutePartnerModel('MODEL_PLACEHOLDER_M537', 'MODEL_PLACEHOLDER_M669'), true, 'Orchestrator (Neon) 与 M669 必须识别为 Plan-Execute 搭档');
+  assert.equal(isCompatibleRuntimeModel('MODEL_PLACEHOLDER_M537', 'MODEL_PLACEHOLDER_M669'), true);
+});

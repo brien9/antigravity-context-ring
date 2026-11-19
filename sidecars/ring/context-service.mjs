@@ -161,24 +161,35 @@ export async function resolveDynamicModelState(calc, lsRef, rpcCaller, options =
       for (const cfg of configs) {
         if (!cfg || typeof cfg !== 'object') continue;
         const canonicalModel = typeof cfg.modelOrAlias?.model === 'string' ? cfg.modelOrAlias.model.trim() : '';
+        const primaryToken = canonicalModel || cfg.modelId || cfg.label;
+        const rawCfgLimit = cfg.maxContextTokens ?? cfg.maxTokens ?? cfg.contextWindowTokens ?? cfg.modelOrAlias?.maxContextTokens;
+        const cfgLimit = (rawCfgLimit !== undefined && rawCfgLimit !== null) ? Number(rawCfgLimit) : NaN;
+        const hasExplicitCfgLimit = Number.isSafeInteger(cfgLimit) && cfgLimit > 0;
+        const hasCatalogedLimit = isCatalogedModel(
+          primaryToken,
+          options.customLimits,
+          dynamicModelCatalog.aliases,
+          null,
+          dynamicModelCatalog.limits
+        );
         registerDynamicModelToken(canonicalModel, canonicalModel);
         registerDynamicModelToken(cfg.modelId, canonicalModel);
         registerDynamicModelToken(cfg.label, canonicalModel);
 
-        const rawCfgLimit = cfg.maxContextTokens ?? cfg.maxTokens ?? cfg.contextWindowTokens ?? cfg.modelOrAlias?.maxContextTokens;
-        const cfgLimit = (rawCfgLimit !== undefined && rawCfgLimit !== null) ? Number(rawCfgLimit) : NaN;
-        const effectiveCfgLimit = (Number.isSafeInteger(cfgLimit) && cfgLimit > 0)
-          ? cfgLimit
-          : getPlatformTruncationLimit(
-              canonicalModel || cfg.modelId || cfg.label,
-              options.customLimits,
-              dynamicModelCatalog.aliases,
-              dynamicModelCatalog.limits
-            );
-        if (Number.isSafeInteger(effectiveCfgLimit) && effectiveCfgLimit > 0) {
-          if (canonicalModel) registerDynamicModelLimit(canonicalModel, effectiveCfgLimit);
-          if (cfg.modelId) registerDynamicModelLimit(cfg.modelId, effectiveCfgLimit);
-          if (cfg.label) registerDynamicModelLimit(cfg.label, effectiveCfgLimit);
+        if (hasExplicitCfgLimit || hasCatalogedLimit) {
+          const effectiveCfgLimit = hasExplicitCfgLimit
+            ? cfgLimit
+            : getPlatformTruncationLimit(
+                primaryToken,
+                options.customLimits,
+                dynamicModelCatalog.aliases,
+                dynamicModelCatalog.limits
+              );
+          if (Number.isSafeInteger(effectiveCfgLimit) && effectiveCfgLimit > 0) {
+            if (canonicalModel) registerDynamicModelLimit(canonicalModel, effectiveCfgLimit);
+            if (cfg.modelId) registerDynamicModelLimit(cfg.modelId, effectiveCfgLimit);
+            if (cfg.label) registerDynamicModelLimit(cfg.label, effectiveCfgLimit);
+          }
         }
       }
       if (isKnownModel(candidateModel, options.customLimits, dynamicModelCatalog.models, dynamicModelCatalog.limits)) {
@@ -263,6 +274,13 @@ export async function resolveRuntimeGeneratorMetadata(lsRef, rpcCaller, targetCa
           if (modelName) {
             registerDynamicModelToken(modelName, planModel);
             registerDynamicModelLimit(modelName, maxTokens);
+          }
+        }
+        if (canonical) {
+          for (const [aliasKey, targetCanonical] of dynamicModelCatalog.aliases.entries()) {
+            if (targetCanonical === canonical) {
+              registerDynamicModelLimit(aliasKey, maxTokens);
+            }
           }
         }
         return {

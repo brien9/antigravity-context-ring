@@ -126,6 +126,30 @@ if (-not $pluginConfig) {
 $jsonContent = $config | ConvertTo-Json -Depth 20
 [System.IO.File]::WriteAllText($configFile, $jsonContent, (New-Object System.Text.UTF8Encoding($false)))
 
+# 3.5 非测试模式下，幂等为桌面与开始菜单快捷方式补齐 --remote-debugging-port=0（兼容 v2.33+ 默认关闭 CDP 的变更）
+if (-not $CustomTargetDir) {
+    try {
+        $shortcutPaths = @(
+            (Join-Path $homeDir "Desktop\Antigravity.lnk"),
+            (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Antigravity.lnk"),
+            (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Antigravity\Antigravity.lnk")
+        )
+        $wshShell = New-Object -ComObject WScript.Shell
+        foreach ($scPath in $shortcutPaths) {
+            if (Test-Path $scPath) {
+                try {
+                    $sc = $wshShell.CreateShortcut($scPath)
+                    $argsStr = [string]$sc.Arguments
+                    if ($argsStr -notmatch '--remote-debugging-port') {
+                        $sc.Arguments = ($argsStr + ' --remote-debugging-port=0').Trim()
+                        $sc.Save()
+                    }
+                } catch {}
+            }
+        }
+    } catch {}
+}
+
 # 4. 若 Antigravity 宿主正在运行，自动无感拉起与宿主共存亡的 Sidecar 守护进程（测试隔离模式跳过自动拉起）
 $antigravityProc = Get-Process antigravity -ErrorAction SilentlyContinue
 if ($antigravityProc -and -not $CustomTargetDir) {

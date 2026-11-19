@@ -7,6 +7,7 @@ import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { cleanOrphanInstances, scanHostPids, isContextRingProcess } from './sidecars/ring/main.mjs';
 import { discoverLanguageServer } from './sidecars/ring/ls-discovery.mjs';
+import { discoverTargets } from './sidecars/ring/runtime-bridge.mjs';
 
 const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
@@ -88,6 +89,50 @@ function isPluginEnabledInConfig(config, filesHealthy = false, pluginKey = PLUGI
   return Boolean(filesHealthy);
 }
 
+function getHostProfileDir() {
+  if (process.env.AGY_TEST_TARGET_DIR) {
+    return join(process.env.AGY_TEST_TARGET_DIR, '__isolated_profile__');
+  }
+  if (process.platform === 'win32') {
+    const appData = process.env.APPDATA || join(HOME, 'AppData', 'Roaming');
+    return join(appData, 'Antigravity');
+  }
+  if (process.platform === 'darwin') {
+    return join(HOME, 'Library', 'Application Support', 'Antigravity');
+  }
+  return join(process.env.XDG_CONFIG_HOME || join(HOME, '.config'), 'Antigravity');
+}
+
+/**
+ * 在 Windows 环境下幂等配置桌面与开始菜单快捷方式的 --remote-debugging-port=0 启动参数
+ * 沙箱测试模式下（设置 AGY_TEST_TARGET_DIR）严格跳过，防止触碰真实用户快捷方式
+ */
+async function configureWindowsShortcuts(enable = true) {
+  if (process.platform !== 'win32' || process.env.AGY_TEST_TARGET_DIR) return;
+  try {
+    const action = enable
+      ? `if ($argsStr -notmatch '--remote-debugging-port') { $sc.Arguments = ($argsStr + ' --remote-debugging-port=0').Trim(); $sc.Save() }`
+      : `if ($argsStr -match '--remote-debugging-port=0') { $sc.Arguments = (($argsStr -replace '(?:^|\\s)--remote-debugging-port=0(?=\\s|$)', ' ').Trim()); $sc.Save() }`;
+    const psCmd =
+      `$paths = @(` +
+      `"$env:USERPROFILE\\Desktop\\Antigravity.lnk", ` +
+      `"$env:APPDATA\\Microsoft\\Windows\\Start Menu\\Programs\\Antigravity.lnk", ` +
+      `"$env:APPDATA\\Microsoft\\Windows\\Start Menu\\Programs\\Antigravity\\Antigravity.lnk"` +
+      `); ` +
+      `$shell = New-Object -ComObject WScript.Shell; ` +
+      `foreach ($p in $paths) { ` +
+      `if (Test-Path $p) { ` +
+      `try { ` +
+      `$sc = $shell.CreateShortcut($p); ` +
+      `$argsStr = [string]$sc.Arguments; ` +
+      action +
+      ` } catch {} ` +
+      `} ` +
+      `}`;
+    await execFileAsync('powershell', ['-NoProfile', '-NonInteractive', '-Command', psCmd]);
+  } catch {}
+}
+
 async function install() {
   console.log('[0/4] 正在安全清理历史残留 Sidecar 孤儿进程...');
   await cleanOrphanInstances().catch(() => {});
@@ -112,6 +157,8 @@ async function install() {
   if (!config.plugins[PLUGIN_KEY]) config.plugins[PLUGIN_KEY] = {};
   config.plugins[PLUGIN_KEY].enabled = true;
   await writeJson(CONFIG_FILE, config);
+
+  await configureWindowsShortcuts(true);
 
   const hostPids = await scanHostPids().catch(() => new Set());
   if (hostPids.size > 0 && !process.env.AGY_TEST_TARGET_DIR) {
@@ -182,6 +229,7 @@ async function uninstall() {
     console.error(`[ERROR] 插件目录清理失败，仍有残留文件: ${TARGET_DIR}`);
     process.exit(1);
   }
+  await configureWindowsShortcuts(false);
   console.log('[SUCCESS] 卸载完成！重启 Antigravity 后界面即可恢复默认状态。');
 }
 
@@ -244,6 +292,18 @@ async function status() {
   const hostPids = await scanHostPids().catch(() => new Set());
   const sidecarPids = await findRunningSidecarPids();
   const lsInfo = await discoverLanguageServer(false).catch(() => null);
+  const profileDir = getHostProfileDir();
+  let cdpPort = null;
+  try {
+    const portFile = join(profileDir, 'DevToolsActivePort');
+    if (existsSync(portFile)) {
+      const rawPort = Number((await readFile(portFile, 'utf8')).split(/\r?\n/)[0]);
+      if (Number.isInteger(rawPort) && rawPort > 0 && rawPort <= 65535) {
+        cdpPort = rawPort;
+      }
+    }
+  } catch {}
+  const cdpTargets = await discoverTargets(profileDir).catch(() => null);
 
   const configStatusLabel = enabled
     ? (explicitEnabled === true ? '已启用 (enabled: true)' : '已启用 (默认启用 / opt-out)')
@@ -254,6 +314,7 @@ async function status() {
   console.log(`宿主进程: ${hostPids.size > 0 ? `运行中 (PIDs: ${Array.from(hostPids).join(', ')})` : '未检测到运行中的 Antigravity'}`);
   console.log(`守护进程: ${sidecarPids.length > 0 ? `运行中 (PIDs: ${sidecarPids.join(', ')})` : '未运行'}`);
   console.log(`语言服务: ${lsInfo ? `已连接 (127.0.0.1:${lsInfo.port}, PID: ${lsInfo.pid}, TLS: ${lsInfo.useTls})` : '未发现活跃 Language Server'}`);
+  console.log(`CDP 通道: ${cdpTargets ? `已就绪 (端口: ${cdpPort ?? '未知'}, 可注入窗口: ${cdpTargets.length})` : '未就绪 (缺少 DevToolsActivePort，请通过带 --remote-debugging-port=0 的快捷方式重启 Antigravity)'}`);
   console.log('------------------------------------------');
 }
 
@@ -268,7 +329,7 @@ async function ensurePs1Utf8Bom(filePath) {
 async function packageZip() {
   const distDir = join(SOURCE, 'dist');
   await mkdir(distDir, { recursive: true });
-  const pluginInfo = await readJson(join(SOURCE, 'plugin.json'), { version: '1.1.1' });
+  const pluginInfo = await readJson(join(SOURCE, 'plugin.json'), { version: '1.1.2' });
   const zipPath = join(distDir, `antigravity-context-ring-v${pluginInfo.version}.zip`);
 
   if (existsSync(zipPath)) {

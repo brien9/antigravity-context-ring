@@ -16,6 +16,16 @@ export const PLATFORM_CONTEXT_LIMITS = {
   // Orchestrator (Argon) (512K - 随 Argon 家族翻倍)
   'MODEL_PLACEHOLDER_M667': 512_000, // Canonical Orchestrator (Argon)
   'MODEL_PLACEHOLDER_M668': 512_000, // Orchestrator (Argon) (gemini-pro-orchestrator-g1-pro)
+  // Gemini 4 Neon (512K - 2026-11 Antigravity v2.33 新增主力旗舰系列)
+  'MODEL_PLACEHOLDER_M530': 512_000,
+  'MODEL_PLACEHOLDER_M531': 512_000,
+  'MODEL_PLACEHOLDER_M532': 512_000, // High (gemini-4-neon-high)
+  'MODEL_PLACEHOLDER_M533': 512_000, // Medium (gemini-4-neon-medium)
+  'MODEL_PLACEHOLDER_M534': 512_000, // Low (gemini-4-neon-low)
+  'MODEL_PLACEHOLDER_M535': 512_000, // XHigh / Extra (gemini-4-neon-xhigh / gemini-4-neon-extra)
+  'MODEL_PLACEHOLDER_M536': 512_000,
+  // Orchestrator (Neon) (512K - 随 Neon 家族对齐)
+  'MODEL_PLACEHOLDER_M537': 512_000, // Orchestrator (Neon) (gemini-pro-orchestrator-neon)
   // Gemini 4 Carbon (512K - 2026-11 Antigravity 平台侧翻倍放开)
   'MODEL_PLACEHOLDER_M670': 512_000, // Gemini 4 Carbon (gemini-4-carbon)
   // 内部 M408 家族 (归属 Gemini 4 Argon 族，512K)
@@ -110,9 +120,18 @@ export const MODEL_ID_ALIASES = {
   'gemini-4-hydrogen-low': 'MODEL_PLACEHOLDER_M527',
   'gemini-4-hydrogen-xhigh': 'MODEL_PLACEHOLDER_M528',
   'gemini-4-hydrogen-extra': 'MODEL_PLACEHOLDER_M528',
+  'gemini-4-neon': 'MODEL_PLACEHOLDER_M533',
+  'gemini-4-neon-high': 'MODEL_PLACEHOLDER_M532',
+  'gemini-4-neon-medium': 'MODEL_PLACEHOLDER_M533',
+  'gemini-4-neon-low': 'MODEL_PLACEHOLDER_M534',
+  'gemini-4-neon-xhigh': 'MODEL_PLACEHOLDER_M535',
+  'gemini-4-neon-extra': 'MODEL_PLACEHOLDER_M535',
+  'gemini-4-neon-trial': 'MODEL_PLACEHOLDER_M533',
   'orchestrator': 'MODEL_PLACEHOLDER_M668',
   'orchestrator-argon': 'MODEL_PLACEHOLDER_M668',
   'gemini-pro-orchestrator-g1-pro': 'MODEL_PLACEHOLDER_M668',
+  'orchestrator-neon': 'MODEL_PLACEHOLDER_M537',
+  'gemini-pro-orchestrator-neon': 'MODEL_PLACEHOLDER_M537',
   'gemini-flash-worker-agy': 'MODEL_PLACEHOLDER_M669',
   'gemini-flash': 'MODEL_PLACEHOLDER_M669',
   'gemini-4-carbon': 'MODEL_PLACEHOLDER_M670',
@@ -190,6 +209,7 @@ const KNOWN_MODEL_KEYWORDS = [
   'lite',
   'argon',
   'hydrogen',
+  'neon',
   'carbon',
   'orchestrator',
   'gpt-oss',
@@ -443,8 +463,11 @@ export function resolveModelFamilyKey(modelId = '', dynamicAliases = null) {
   if (/(?:^|-)m(?:52[5-9]|43[2-4])(?=$|-)/.test(norm) || norm.includes('hydrogen')) {
     return 'FAMILY_HYDROGEN';
   }
-  if (/(?:^|-)m66[78](?=$|-)/.test(norm) || norm.includes('orchestrator')) {
+  if (/(?:^|-)m(?:66[78]|537)(?=$|-)/.test(norm) || norm.includes('orchestrator')) {
     return 'FAMILY_ORCHESTRATOR';
+  }
+  if (/(?:^|-)m53[0-6](?=$|-)/.test(norm) || norm.includes('neon')) {
+    return 'FAMILY_NEON';
   }
   if (/(?:^|-)m(?:41[7-9]|40[89]|41[0-3]|42[0-9]|43[01]|43[78])(?=$|-)/.test(norm) || norm.includes('argon')) {
     return 'FAMILY_ARGON';

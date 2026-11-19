@@ -6,7 +6,7 @@
   
   <title>Antigravity Context Ring - Antigravity 上下文监控圆环</title>
   <meta name="description" content="专为 Google Antigravity 桌面端打造的原生 19px 行内上下文监控圆环。直连 Connect-RPC 物理真值，支持 512K/256K/128K 截断线自学习与 Orchestrator/Swarm/btw，0ms 切换且零侵入。">
-  <meta name="keywords" content="Google Antigravity, Antigravity IDE, Antigravity App, Antigravity 桌面客户端, Antigravity 插件, Context Window, Auto-Compaction, 上下文监控, Token 计数器, Gemini 4 Hydrogen, Gemini 4 Argon, Gemini 4 Carbon, Orchestrator, Swarm, Subagent, Claude 5.5, Context Ring">
+  <meta name="keywords" content="Google Antigravity, Antigravity IDE, Antigravity App, Antigravity 桌面客户端, Antigravity 插件, Context Window, Auto-Compaction, 上下文监控, Token 计数器, Gemini 4 Neon, Gemini 4 Hydrogen, Gemini 4 Argon, Gemini 4 Carbon, Orchestrator, Swarm, Subagent, Claude 5.5, Context Ring">
   <meta name="author" content="brien9">
   <link rel="canonical" href="https://brien9.github.io/antigravity-context-ring/">
   <meta name="google-site-verification" content="NO0-a_EHsaSO4L1AQLVm1EASEXnrovT_e0WmDOpPCT8">
@@ -46,7 +46,7 @@
     "description": "Native inline context window telemetry and physical truncation monitor for Google Antigravity Desktop App (Antigravity App). Zero-invasion, Connect-RPC ground-truth, 0ms session switch.",
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "Windows, macOS, Linux",
-    "softwareVersion": "1.1.1",
+    "softwareVersion": "1.1.2",
     "license": "https://opensource.org/licenses/MIT",
     "offers": {
       "@type": "Offer",
@@ -649,7 +649,7 @@
   <header class="hero container">
     <div class="badge-wrap">
       <span class="badge-dot"></span>
-      <span>Antigravity Context Ring v1.1.1 · 零侵入原生 HUD</span>
+      <span>Antigravity Context Ring v1.1.2 · 零侵入原生 HUD</span>
     </div>
     <h1>专为 Google Antigravity 桌面客户端打造的<br>原生级行内上下文长度监控圆环</h1>
     <p class="hero-sub">
@@ -816,6 +816,13 @@
           </thead>
           <tbody>
             <tr>
+              <td><strong>Gemini 4 Neon</strong> (XHigh / High / Med / Low)</td>
+              <td><span class="tag-limit tag-512">512K (512,000)</span></td>
+              <td>1,000,000</td>
+              <td>后台自动压缩</td>
+              <td>v2.33+ 主力旗舰系列，原生对齐 512K 平台截断上限并与运行态持续校准</td>
+            </tr>
+            <tr>
               <td><strong>Gemini 4 Hydrogen</strong> (Extra / High / Med / Low)</td>
               <td><span class="tag-limit tag-512">512K (512,000)</span></td>
               <td>1,000,000</td>
@@ -830,11 +837,11 @@
               <td>2026-11 平台侧翻倍放开至 512K；90% 前收敛并 Commit 当前重构</td>
             </tr>
             <tr>
-              <td><strong>Orchestrator (Argon)</strong></td>
+              <td><strong>Orchestrator (Neon / Argon)</strong></td>
               <td><span class="tag-limit tag-512">512K (512,000)</span></td>
               <td>1,000,000</td>
               <td>Plan-Execute 协同</td>
-              <td>自动识别 Plan (<code>M668</code>) ⇄ Execute (<code>M669</code>) 双模型协同，锁住 512K 主分母不被低配额子执行步压低</td>
+              <td>自动识别 Plan (<code>M537</code> / <code>M668</code>) ⇄ Execute (<code>M669</code>) 双模型协同，锁住 512K 主分母不被低配额子执行步压低</td>
             </tr>
             <tr>
               <td><strong>Gemini 4 Carbon</strong></td>
@@ -952,7 +959,7 @@
         <div class="faq-item">
           <h3>Q: 多窗格分屏、Subagent / Swarm Worker 辅助窗格、/btw 与 Orchestrator 双模型会串台吗？</h3>
           <p>
-            <strong>不会。</strong> 前端严格隔离主窗格、<code>/btw</code> 与 Subagent / Swarm Worker 辅助窗格作用域，在无模型按钮视图下直读 React Fiber <code>selectedModel</code>；后端原生识别 <code>Orchestrator (Argon)</code> Plan (<code>M668</code>) ⇄ Execute (<code>M669</code>) 协同关系与 0-<code>USER_INPUT</code> 消息驱动轨迹，保证分母与压缩监控全程准确。
+            <strong>不会。</strong> 前端严格隔离主窗格、<code>/btw</code> 与 Subagent / Swarm Worker 辅助窗格作用域，在无模型按钮视图下直读 React Fiber <code>selectedModel</code>；后端原生识别 <code>Orchestrator (Neon / Argon)</code> Plan (<code>M537</code> / <code>M668</code>) ⇄ Execute (<code>M669</code>) 协同关系与 0-<code>USER_INPUT</code> 消息驱动轨迹，保证分母与压缩监控全程准确。
           </p>
         </div>
       </div>

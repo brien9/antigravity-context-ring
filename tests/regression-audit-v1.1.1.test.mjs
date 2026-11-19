@@ -1,6 +1,6 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, symlinkSync, existsSync, rmSync, mkdirSync, lstatSync } from 'node:fs';
+import { readFileSync, writeFileSync, symlinkSync, existsSync, rmSync, mkdirSync, mkdtempSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
@@ -209,45 +209,54 @@ test('【审查点 2】紫色环回退修复: 会话从窗口化压缩态回退�
 // 审查点 3: 多 LS 场景单 LS 磁盘缓存穿透真实发现
 // =========================================================================
 test('【审查点 3】多 LS 单磁盘缓存穿透: isDiskRestoredSingle 状态下 discoverAllLanguageServers 必须穿透缓存执行真实发现并重置标记', async () => {
-  const cacheInfo = _getLsDiscoveryCacheInfo();
-  assert.equal(cacheInfo.isDiskRestoredSingle, false, '初始状态 isDiskRestoredSingle 为 false');
-
-  // 启动一个临时本地假 LS 服务，响应 probePort 的 GetUnleashData 探活请求
-  let srv;
-  await new Promise((resolve) => {
-    srv = createServer((req, res) => {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end('{}');
-    });
-    srv.listen(0, '127.0.0.1', resolve);
-  });
-  const fakePort = srv.address().port;
-
-  // 1. 写入磁盘缓存（包含完整的 port、csrfToken 与 useTls）
-  const fakeLs = { port: fakePort, csrfToken: 'fake-single-token-1234', useTls: false };
-  writeDiskCache(fakeLs);
+  const originalTestDir = process.env.AGY_TEST_TARGET_DIR;
+  const sandboxDir = mkdtempSync(join(tmpdir(), 'agy-audit-p3-'));
+  process.env.AGY_TEST_TARGET_DIR = sandboxDir;
 
   try {
-    const single = await discoverLanguageServer(false);
-    assert.ok(single, '成功从磁盘缓存恢复单个 LS');
-    assert.equal(single.port, fakePort);
+    clearCachedLanguageServer();
+    const cacheInfo = _getLsDiscoveryCacheInfo();
+    assert.equal(cacheInfo.isDiskRestoredSingle, false, '初始状态 isDiskRestoredSingle 为 false');
 
-    const infoAfterRestore = _getLsDiscoveryCacheInfo();
-    assert.equal(infoAfterRestore.isDiskRestoredSingle, true, '单磁盘缓存恢复后必须标记 isDiskRestoredSingle = true');
+    // 启动一个临时本地假 LS 服务，响应 probePort 的 GetUnleashData 探活请求
+    let srv;
+    await new Promise((resolve) => {
+      srv = createServer((req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('{}');
+      });
+      srv.listen(0, '127.0.0.1', resolve);
+    });
+    const fakePort = srv.address().port;
 
-    // 2. 在缓存 TTL 内调用 discoverAllLanguageServers(false)（未带 forceRefresh）
-    // 由于 isDiskRestoredSingle = true，必须绕过 isCacheValid，触发真实发现 _performDiscovery
-    const allServers = await discoverAllLanguageServers(false);
+    // 1. 写入磁盘缓存（包含完整的 port、csrfToken 与 useTls）
+    const fakeLs = { port: fakePort, csrfToken: 'fake-single-token-1234', useTls: false };
+    writeDiskCache(fakeLs);
 
-    // 验证：真实发现完成后，isDiskRestoredSingle 必须被重置为 false
-    const infoAfterAll = _getLsDiscoveryCacheInfo();
-    assert.equal(infoAfterAll.isDiskRestoredSingle, false, '全量多 LS 发现完成后必须重置 isDiskRestoredSingle = false');
-    assert.ok(Array.isArray(allServers), '返回多 LS 列表');
-  } finally {
-    await new Promise(r => { srv.closeAllConnections?.(); srv.close(r); });
     try {
-      rmSync(getDiskCacheFile(), { force: true });
-    } catch {}
+      const single = await discoverLanguageServer(false);
+      assert.ok(single, '成功从磁盘缓存恢复单个 LS');
+      assert.equal(single.port, fakePort);
+
+      const infoAfterRestore = _getLsDiscoveryCacheInfo();
+      assert.equal(infoAfterRestore.isDiskRestoredSingle, true, '单磁盘缓存恢复后必须标记 isDiskRestoredSingle = true');
+
+      // 2. 在缓存 TTL 内调用 discoverAllLanguageServers(false)（未带 forceRefresh）
+      // 由于 isDiskRestoredSingle = true，必须绕过 isCacheValid，触发真实发现 _performDiscovery
+      const allServers = await discoverAllLanguageServers(false);
+
+      // 验证：真实发现完成后，isDiskRestoredSingle 必须被重置为 false
+      const infoAfterAll = _getLsDiscoveryCacheInfo();
+      assert.equal(infoAfterAll.isDiskRestoredSingle, false, '全量多 LS 发现完成后必须重置 isDiskRestoredSingle = false');
+      assert.ok(Array.isArray(allServers), '返回多 LS 列表');
+    } finally {
+      await new Promise(r => { srv.closeAllConnections?.(); srv.close(r); });
+    }
+  } finally {
+    if (originalTestDir !== undefined) process.env.AGY_TEST_TARGET_DIR = originalTestDir;
+    else delete process.env.AGY_TEST_TARGET_DIR;
+    clearCachedLanguageServer();
+    try { rmSync(sandboxDir, { recursive: true, force: true }); } catch {}
   }
 });
 
@@ -255,58 +264,63 @@ test('【审查点 3】多 LS 单磁盘缓存穿透: isDiskRestoredSingle 状态
 // 审查点 4: 悬空软链接 (Dangling Symlink) 安全处理
 // =========================================================================
 test('【审查点 4】悬空软链接防御: readDiskCache 与 writeDiskCache 面对悬空 symlink 必须安全斩断清理，杜绝异常', () => {
-  const cacheFile = getDiskCacheFile();
-  const danglingTarget = join(tmpdir(), `non-existent-agy-target-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
+  const originalTestDir = process.env.AGY_TEST_TARGET_DIR;
+  const sandboxDir = mkdtempSync(join(tmpdir(), 'agy-audit-p4-'));
+  process.env.AGY_TEST_TARGET_DIR = sandboxDir;
 
-  // 清理现有缓存
   try {
-    rmSync(cacheFile, { force: true });
-  } catch {}
+    const cacheFile = getDiskCacheFile();
+    const danglingTarget = join(tmpdir(), `non-existent-agy-target-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
 
-  // 创建指向不存在路径的悬空软链接
-  let symlinkCreated = false;
-  try {
-    symlinkSync(danglingTarget, cacheFile);
-    symlinkCreated = true;
-  } catch (e) {
-    // Windows 下非管理员权限创建 symlink 可能会失败（EPERM）
-  }
-
-  if (symlinkCreated) {
-    assert.equal(existsSync(cacheFile), false, '悬空软链接的目标不存在时 existsSync 必然返回 false');
-    const statBefore = lstatSync(cacheFile);
-    assert.equal(statBefore.isSymbolicLink(), true, '但 lstatSync 必须能识别出该文件为符号链接');
-
-    // 1. 测试 readDiskCache: 遇到悬空软链接必须安全返回 null 并彻底删除该软链接
-    const readResult = readDiskCache();
-    assert.equal(readResult, null, 'readDiskCache 遇到悬空软链接必须安全返回 null');
-    assert.throws(() => lstatSync(cacheFile), '悬空软链接必须已被 rmSync 彻底斩断删除');
-
-    // 2. 测试 writeDiskCache: 重新制造悬空软链接，写入新缓存必须斩断软链接并成功写入真实文件
-    symlinkSync(danglingTarget, cacheFile);
-    assert.equal(lstatSync(cacheFile).isSymbolicLink(), true);
-
-    const testPayload = { port: 48999, csrfToken: 'test-symlink-safe-token', useTls: false };
-    assert.doesNotThrow(() => {
-      writeDiskCache(testPayload);
-    }, 'writeDiskCache 写入悬空软链接路径不得抛出异常');
-
-    const statAfter = lstatSync(cacheFile);
-    assert.equal(statAfter.isSymbolicLink(), false, '写入后必须是普通物理文件，绝非符号链接');
-    const readAfterWrite = readDiskCache();
-    assert.equal(readAfterWrite?.port, 48999);
-    assert.equal(readAfterWrite?.csrfToken, 'test-symlink-safe-token');
-
-    // 清理测试文件
+    // 清理现有缓存
     try {
       rmSync(cacheFile, { force: true });
     } catch {}
-  } else {
-    // 环境权限受限时，做源码级与单元级断言
-    const discoveryCode = readFileSync(new URL('../sidecars/ring/ls-discovery.mjs', import.meta.url), 'utf8');
-    assert.match(discoveryCode, /lstatSync\(targetFile\)/, 'read/write 必须包含 lstatSync');
-    assert.match(discoveryCode, /stat\.isSymbolicLink\(\)/, '必须显式判断 isSymbolicLink');
-    assert.match(discoveryCode, /rmSync\(targetFile,\s*\{\s*force:\s*true\s*\}\)/, '必须安全清理符号链接');
+
+    // 创建指向不存在路径的悬空软链接
+    let symlinkCreated = false;
+    try {
+      symlinkSync(danglingTarget, cacheFile);
+      symlinkCreated = true;
+    } catch (e) {
+      // Windows 下非管理员权限创建 symlink 可能会失败（EPERM）
+    }
+
+    if (symlinkCreated) {
+      assert.equal(existsSync(cacheFile), false, '悬空软链接的目标不存在时 existsSync 必然返回 false');
+      const statBefore = lstatSync(cacheFile);
+      assert.equal(statBefore.isSymbolicLink(), true, '但 lstatSync 必须能识别出该文件为符号链接');
+
+      // 1. 测试 readDiskCache: 遇到悬空软链接必须安全返回 null 并彻底删除该软链接
+      const readResult = readDiskCache();
+      assert.equal(readResult, null, 'readDiskCache 遇到悬空软链接必须安全返回 null');
+      assert.throws(() => lstatSync(cacheFile), '悬空软链接必须已被 rmSync 彻底斩断删除');
+
+      // 2. 测试 writeDiskCache: 重新制造悬空软链接，写入新缓存必须斩断软链接并成功写入真实文件
+      symlinkSync(danglingTarget, cacheFile);
+      assert.equal(lstatSync(cacheFile).isSymbolicLink(), true);
+
+      const testPayload = { port: 48999, csrfToken: 'test-symlink-safe-token', useTls: false };
+      assert.doesNotThrow(() => {
+        writeDiskCache(testPayload);
+      }, 'writeDiskCache 写入悬空软链接路径不得抛出异常');
+
+      const statAfter = lstatSync(cacheFile);
+      assert.equal(statAfter.isSymbolicLink(), false, '写入后必须是普通物理文件，绝非符号链接');
+      const readAfterWrite = readDiskCache();
+      assert.equal(readAfterWrite?.port, 48999);
+      assert.equal(readAfterWrite?.csrfToken, 'test-symlink-safe-token');
+    } else {
+      // 环境权限受限时，做源码级与单元级断言
+      const discoveryCode = readFileSync(new URL('../sidecars/ring/ls-discovery.mjs', import.meta.url), 'utf8');
+      assert.match(discoveryCode, /lstatSync\(targetFile\)/, 'read/write 必须包含 lstatSync');
+      assert.match(discoveryCode, /stat\.isSymbolicLink\(\)/, '必须显式判断 isSymbolicLink');
+      assert.match(discoveryCode, /rmSync\(targetFile,\s*\{\s*force:\s*true\s*\}\)/, '必须安全清理符号链接');
+    }
+  } finally {
+    if (originalTestDir !== undefined) process.env.AGY_TEST_TARGET_DIR = originalTestDir;
+    else delete process.env.AGY_TEST_TARGET_DIR;
+    try { rmSync(sandboxDir, { recursive: true, force: true }); } catch {}
   }
 });
 
