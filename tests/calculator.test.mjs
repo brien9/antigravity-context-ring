@@ -877,3 +877,39 @@ test('Gemini 4 Neon 与 Orchestrator (Neon): 512K 阈值、编目识别及 M669 
   assert.equal(isPlanExecutePartnerModel('MODEL_PLACEHOLDER_M537', 'MODEL_PLACEHOLDER_M669'), true, 'Orchestrator (Neon) 与 M669 必须识别为 Plan-Execute 搭档');
   assert.equal(isCompatibleRuntimeModel('MODEL_PLACEHOLDER_M537', 'MODEL_PLACEHOLDER_M669'), true);
 });
+
+test('Antigravity v2.35 模型列表对齐: Leaving Soon 角标剥离、Carbon 多档位与 Orchestrator Gemini 4 复合命名', () => {
+  const expected512k = [
+    'Gemini 4 Neon Medium New',
+    'Gemini 4 Carbon Medium New',
+    'Gemini 4 Carbon (High)',
+    'Gemini 4 Carbon (Low)',
+    'Gemini 4 Argon Medium Leaving Soon',
+    'Gemini 4 Argon (Medium) 即将下线',
+    'Gemini 4 Hydrogen Medium New',
+    'Orchestrator Gemini 4 Neon High New',
+    'Orchestrator Gemini 4 Hydrogen High',
+    'Orchestrator Gemini 4 Argon Medium Leaving Soon',
+    'Orchestrator Gemini 4 Carbon High'
+  ];
+  for (const id of expected512k) {
+    assert.equal(getPlatformTruncationLimit(id), 512_000, `${id} 必须映射为 512K`);
+    assert.equal(isKnownModel(id), true, `${id} 必须被识别为已知模型`);
+    assert.equal(isCatalogedModel(id), true, `${id} 必须已完成精确编目`);
+  }
+
+  for (const id of ['Gemini 3.8 Flash Medium Leaving Soon', 'Claude Opus 5.5 Medium New', 'Claude Sonnet 5.5 Medium New']) {
+    assert.equal(getPlatformTruncationLimit(id), 256_000, `${id} 必须映射为 256K`);
+    assert.equal(isKnownModel(id), true, `${id} 必须被识别为已知模型`);
+    assert.equal(isCatalogedModel(id), true, `${id} 必须已完成精确编目`);
+  }
+
+  assert.equal(getPlatformTruncationLimit('GPT-OSS 120B (Medium) Notice'), 80_000);
+  assert.equal(normalizeModelLookupKey('Gemini 4 Argon Medium Leaving Soon'), 'gemini-4-argon-medium');
+  assert.equal(normalizeModelLookupKey('Gemini 3.8 Flash Medium Leaving Soon'), 'gemini-3.8-flash-medium');
+  assert.equal(normalizeModelLookupKey('Gemini 4 Argon (Medium) 即将下线'), 'gemini-4-argon-medium');
+  assert.equal(resolveModelFamilyKey('Orchestrator Gemini 4 Neon High New'), 'FAMILY_ORCHESTRATOR');
+  assert.equal(resolveModelFamilyKey('Orchestrator Gemini 4 Hydrogen High'), 'FAMILY_ORCHESTRATOR');
+  assert.equal(isPlanExecutePartnerModel('Orchestrator Gemini 4 Neon High New', 'MODEL_PLACEHOLDER_M669'), true);
+  assert.equal(isPlanExecutePartnerModel('Orchestrator Gemini 4 Hydrogen High', 'MODEL_PLACEHOLDER_M669'), true);
+});

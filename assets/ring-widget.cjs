@@ -123,7 +123,8 @@ var __agRingCacheModule = (function() {
       !existing.isEstimated ||
       existing.source === 'checkpoint' ||
       existing.source === 'planner' ||
-      existing.source === 'ls-rpc'
+      existing.source === 'ls-rpc' ||
+      existing.source === 'fiber-context-usage'
     );
     const isAuthoritativeToolDelta =
       (incoming.source === 'checkpoint' || incoming.source === 'planner') &&
@@ -163,10 +164,10 @@ var __agRingCacheModule = (function() {
   function normalizeClientModelKey(raw) {
     if (!raw || typeof raw !== 'string') return '';
     return raw
-      .replace(/[(（\[]\s*(?:新|new|注意|notice|unavailable|default)\s*[)）\]]/gi, ' ')
+      .replace(/[(（\[]\s*(?:新|new|注意|notice|unavailable|leaving\s+soon|deprecated|即将下线|即将停用|即将移除|default)\s*[)）\]]/gi, ' ')
       .replace(/(?:\s*[·•|/:-]\s*|\s+)\d+(?:\.\d+)?\s*[km]b?(?=\s|$|[)）\]])/gi, ' ')
-      .replace(/(?:^|(?<![a-zA-Z0-9_-]))(?:new|notice|unavailable)(?![a-zA-Z0-9_-])/gi, ' ')
-      .replace(/(?:^|(?<=[\s)）\]a-zA-Z0-9低中高])|(?<=\S)(?=(?:新|注意)+$))(?:新|注意)(?=[\s(（\[]|$|(?:新|注意)+$)/g, ' ')
+      .replace(/(?:^|(?<![a-zA-Z0-9_-]))(?:leaving\s+soon|new|notice|unavailable|deprecated)(?![a-zA-Z0-9_-])/gi, ' ')
+      .replace(/(?:^|(?<=[\s)）\]a-zA-Z0-9低中高])|(?<=\S)(?=(?:新|注意|即将下线|即将停用|即将移除)+$))(?:新|注意|即将下线|即将停用|即将移除)(?=[\s(（\[]|$|(?:新|注意|即将下线|即将停用|即将移除)+$)/g, ' ')
       .trim()
       .toLowerCase()
       .replace(/[()（）[\]_/\s.:·•|]+/g, '-')
@@ -260,8 +261,8 @@ var __agRingCacheModule = (function() {
   function resolveClientModelFamily(raw) {
     const norm = normalizeClientModelKey(typeof raw === 'string' ? raw : '');
     if (!norm) return '';
-    if (norm.includes('hydrogen') || /(?:^|-)m(?:52[5-9]|43[2-4])(?=$|-)/.test(norm)) return 'hydrogen';
     if (norm.includes('orchestrator') || /(?:^|-)m(?:66[78]|537)(?=$|-)/.test(norm)) return 'orchestrator';
+    if (norm.includes('hydrogen') || /(?:^|-)m(?:52[5-9]|43[2-4])(?=$|-)/.test(norm)) return 'hydrogen';
     if (norm.includes('neon') || /(?:^|-)m53[0-6](?=$|-)/.test(norm)) return 'neon';
     if (
       norm.includes('argon') ||
@@ -352,15 +353,19 @@ var __agRingCacheModule = (function() {
     }
 
     // 1. Gemini 4 全系列 (512K - 2026-11 Antigravity 平台侧翻倍放开):
-    //    Neon / Hydrogen / Argon / Carbon / Orchestrator (Argon/Neon) 及对应内部 M408~M438 / M525~M537 / M667~M668 / M670
-    if (
+    //    Neon / Hydrogen / Argon / Carbon / Orchestrator (Gemini 4 Neon/Hydrogen/Argon/Carbon) 及对应内部 M408~M438 / M525~M537 / M667~M668 / M670
+    const isGemini4Series =
       lower.includes('neon') ||
       lower.includes('hydrogen') ||
       lower.includes('argon') ||
       lower.includes('carbon') ||
-      lower.includes('orchestrator') ||
-      /(?:^|[^a-z0-9])m(?:40[89]|41[0-3]|41[7-9]|42[0-4]|42[7-9]|43[0-4]|43[78]|52[5-9]|53[0-7]|66[78]|670)(?=$|[^0-9])/.test(lower)
-    ) {
+      /(?:^|[^a-z0-9])gemini[-_\s]?4(?=$|[^0-9])/.test(lower) ||
+      /(?:^|[^a-z0-9])m(?:40[89]|41[0-3]|41[7-9]|42[0-4]|42[7-9]|43[0-4]|43[78]|52[5-9]|53[0-7]|66[78]|670)(?=$|[^0-9])/.test(lower);
+    const hasExplicitNonGemini4OrchestratorBase =
+      lower.includes('orchestrator') &&
+      !isGemini4Series &&
+      (lower.includes('claude') || /(?:gpt[-_\s]?oss|(?:^|[^a-z0-9])120b(?=$|[^a-z0-9]))/.test(lower) || lower.includes('flash'));
+    if (isGemini4Series || (lower.includes('orchestrator') && !hasExplicitNonGemini4OrchestratorBase)) {
       return 512000;
     }
 
@@ -415,6 +420,78 @@ var __agRingCacheModule = (function() {
     }
   }
 
+  function toSafeFiberInt(val) {
+    if (typeof val === 'number') {
+      return (Number.isSafeInteger(val) && val >= 0) ? val : null;
+    }
+    if (typeof val === 'string') {
+      const trimmed = val.trim();
+      if (!/^\d+$/.test(trimmed)) return null;
+      const num = Number(trimmed);
+      return (Number.isSafeInteger(num) && num >= 0) ? num : null;
+    }
+    return null;
+  }
+
+  // 解析宿主 React 状态中的 exa.jetski_cortex_pb.ContextWindowUsage 权威用量指标
+  function extractContextUsageMetrics(rawObj) {
+    if (!rawObj || typeof rawObj !== 'object' || Array.isArray(rawObj)) return null;
+    let used = toSafeFiberInt(rawObj.estimatedTokensUsed);
+    if (used === null) {
+      used = toSafeFiberInt(rawObj.usedTokens);
+    }
+    if ((used === null || used === 0) && Array.isArray(rawObj.tokenGroups) && rawObj.tokenGroups.length > 0) {
+      let sum = 0;
+      let hasGroupToken = false;
+      for (const grp of rawObj.tokenGroups) {
+        if (!grp || typeof grp !== 'object') continue;
+        const t = toSafeFiberInt(grp.tokens ?? grp.tokenCount ?? grp.estimatedTokens);
+        if (t !== null) {
+          sum += t;
+          hasGroupToken = true;
+        }
+      }
+      if (hasGroupToken && (used === null || sum > 0)) {
+        used = sum;
+      }
+    }
+
+    const rawLimit = toSafeFiberInt(rawObj.maxContextTokens ?? rawObj.contextWindowLimit);
+    const limit = (rawLimit !== null && rawLimit >= 4000 && rawLimit <= 10000000) ? rawLimit : 0;
+    if (used === null || (used <= 0 && limit <= 0)) return null;
+
+    const lastStepIndex = toSafeFiberInt(rawObj.lastStepIndex);
+    const compacted = Boolean(rawObj.compactedSinceLastCall || rawObj.estimatedAfterCompaction);
+    return { used, limit, lastStepIndex, compacted };
+  }
+
+  // 从前端状态步骤序列末尾提取真实 modelUsage 硬件级指标（作为 ContextWindowUsage 缺失时的兜底）
+  function extractUsageFromFiberSteps(steps) {
+    if (!Array.isArray(steps) || steps.length === 0) return null;
+    for (let i = steps.length - 1; i >= 0; i--) {
+      const step = steps[i];
+      if (!step || typeof step !== 'object') continue;
+      const mu = step.metadata?.modelUsage || step.modelUsage;
+      if (!mu || typeof mu !== 'object' || Array.isArray(mu)) continue;
+      const inputTokens = toSafeFiberInt(mu.inputTokens) ?? 0;
+      const cacheReadTokens = toSafeFiberInt(mu.cacheReadTokens) ?? 0;
+      const cacheCreationTokens = toSafeFiberInt(mu.cacheCreationTokens) ?? 0;
+      const outputTokens = toSafeFiberInt(mu.outputTokens) ?? 0;
+      const used = inputTokens + cacheReadTokens + cacheCreationTokens + outputTokens;
+      if (used > 0) {
+        const idx = toSafeFiberInt(step.stepIndex);
+        return {
+          used,
+          limit: 0,
+          lastStepIndex: idx !== null ? idx : i,
+          compacted: false,
+          model: typeof mu.model === 'string' ? mu.model : ''
+        };
+      }
+    }
+    return null;
+  }
+
   return {
     MemoryLRUCache,
     normalizeSnapshotSchema,
@@ -425,6 +502,8 @@ var __agRingCacheModule = (function() {
     clearClientModelLimits,
     normalizeClientModelKey,
     resolveClientModelFamily,
+    extractContextUsageMetrics,
+    extractUsageFromFiberSteps,
     getRingColor
   };
 })();
@@ -456,6 +535,8 @@ function installAgContextRingWidget() {
     inferClientModelLimit,
     updateClientModelLimits,
     resolveClientModelFamily,
+    extractContextUsageMetrics,
+    extractUsageFromFiberSteps,
     getRingColor
   } = __agRingCacheModule;
   const memoryCache = new MemoryLRUCache(50);
@@ -711,7 +792,9 @@ function installAgContextRingWidget() {
   const ringMetrics = {
     agentStateEvents: 0,
     forceRequests: 0,
-    rpcCalls: 0
+    rpcCalls: 0,
+    fiberAuthHits: 0,
+    fiberAuthSource: ''
   };
   window.__agContextRingMetrics = ringMetrics;
 
@@ -731,10 +814,10 @@ function installAgContextRingWidget() {
   function stripModelHintBadges(text) {
     if (!text) return '';
     return text
-      .replace(/[(（\[]\s*(?:新|new|注意|notice|unavailable|default)\s*[)）\]]/gi, ' ')
+      .replace(/[(（\[]\s*(?:新|new|注意|notice|unavailable|leaving\s+soon|deprecated|即将下线|即将停用|即将移除|default)\s*[)）\]]/gi, ' ')
       .replace(/(?:\s*[·•|/:-]\s*|\s+)\d+(?:\.\d+)?\s*[km]b?(?=\s|$|[)）\]])/gi, ' ')
-      .replace(/(?:^|(?<![a-zA-Z0-9_-]))(?:new|notice|unavailable)(?![a-zA-Z0-9_-])/gi, ' ')
-      .replace(/(?:^|(?<=[\s)）\]a-zA-Z0-9低中高])|(?<=\S)(?=(?:新|注意)+$))(?:新|注意)(?=[\s(（\[]|$|(?:新|注意)+$)/g, ' ')
+      .replace(/(?:^|(?<![a-zA-Z0-9_-]))(?:leaving\s+soon|new|notice|unavailable|deprecated)(?![a-zA-Z0-9_-])/gi, ' ')
+      .replace(/(?:^|(?<=[\s)）\]a-zA-Z0-9低中高])|(?<=\S)(?=(?:新|注意|即将下线|即将停用|即将移除)+$))(?:新|注意|即将下线|即将停用|即将移除)(?=[\s(（\[]|$|(?:新|注意|即将下线|即将停用|即将移除)+$)/g, ' ')
       .replace(/^[\s·•|/:-]+|[\s·•|/:-]+$/g, '')
       .replace(/\s+/g, ' ')
       .trim();
@@ -1328,6 +1411,269 @@ function installAgContextRingWidget() {
     }
   }
 
+  // 严格按 cid 检索宿主 React Fiber 状态树中的权威 contextWindowUsage 或步级 modelUsage，绝不跨会话串台
+  function findFiberContextWindowUsage(targetBox, cid) {
+    if (!targetBox || !cid) return null;
+    const targetCid = cid.toLowerCase();
+
+    const hasMismatchedCid = (obj) => {
+      if (!obj || typeof obj !== 'object') return false;
+      for (const key of ['conversationId', 'cascadeId']) {
+        const val = obj[key];
+        if (typeof val === 'string' && GUID.test(val) && val.toLowerCase() !== targetCid) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    const searchUsageInObject = (rootObj, maxDepth = 4, maxNodes = 80) => {
+      if (!rootObj || typeof rootObj !== 'object' || rootObj.nodeType || typeof rootObj === 'function') {
+        return null;
+      }
+      const visited = new WeakSet();
+      const queue = [{ obj: rootObj, depth: 0 }];
+      let nodesVisited = 0;
+
+      while (queue.length > 0 && nodesVisited < maxNodes) {
+        const { obj: cur, depth } = queue.shift();
+        if (!cur || typeof cur !== 'object' || cur.nodeType || typeof cur === 'function') continue;
+        if (visited.has(cur)) continue;
+        visited.add(cur);
+        nodesVisited++;
+
+        if (hasMismatchedCid(cur)) continue;
+
+        if (cur.contextWindowUsage && typeof cur.contextWindowUsage === 'object' && !hasMismatchedCid(cur.contextWindowUsage)) {
+          const direct = extractContextUsageMetrics(cur.contextWindowUsage);
+          if (direct) return direct;
+        }
+
+        if (cur.estimatedTokensUsed !== undefined && cur.maxContextTokens !== undefined) {
+          const selfMetrics = extractContextUsageMetrics(cur);
+          if (selfMetrics) return selfMetrics;
+        }
+
+        if (depth >= maxDepth) continue;
+
+        if (cur instanceof Map) {
+          let matchedMapVal;
+          let hasMatchedKey = false;
+          for (const [k, v] of cur.entries()) {
+            if (typeof k === 'string' && k.toLowerCase() === targetCid) {
+              matchedMapVal = v;
+              hasMatchedKey = true;
+              break;
+            }
+          }
+          if (hasMatchedKey) {
+            if (matchedMapVal && typeof matchedMapVal === 'object') {
+              queue.push({ obj: matchedMapVal, depth: depth + 1 });
+            }
+            continue;
+          }
+          let count = 0;
+          for (const [k, v] of cur.entries()) {
+            if (++count > 20) break;
+            if (typeof k === 'string' && GUID.test(k) && k.toLowerCase() !== targetCid) continue;
+            if (v && typeof v === 'object') queue.push({ obj: v, depth: depth + 1 });
+          }
+          continue;
+        }
+
+        if (Array.isArray(cur)) {
+          const limit = Math.min(cur.length, 20);
+          for (let i = 0; i < limit; i++) {
+            const item = cur[i];
+            if (item && typeof item === 'object') queue.push({ obj: item, depth: depth + 1 });
+          }
+          continue;
+        }
+
+        let keys;
+        try {
+          keys = Object.keys(cur);
+        } catch {
+          continue;
+        }
+
+        let cidKey = null;
+        for (const k of keys) {
+          if (GUID.test(k) && k.toLowerCase() === targetCid) {
+            cidKey = k;
+            break;
+          }
+        }
+        if (cidKey) {
+          const val = cur[cidKey];
+          if (val && typeof val === 'object') queue.push({ obj: val, depth: depth + 1 });
+          continue;
+        }
+
+        for (const k of keys) {
+          if (k.startsWith('_') || k.startsWith('__react')) continue;
+          if (GUID.test(k) && k.toLowerCase() !== targetCid) continue;
+          let val;
+          try { val = cur[k]; } catch { continue; }
+          if (val && typeof val === 'object' && !val.nodeType && typeof val !== 'function') {
+            queue.push({ obj: val, depth: depth + 1 });
+          }
+        }
+      }
+      return null;
+    };
+
+    const ctx = getReactCascadeContext(targetBox);
+    const provider = ctx?.state?.agentStateProvider;
+    let state = null;
+    if (provider && typeof provider.getState === 'function') {
+      try {
+        const s = provider.getState();
+        if (s && typeof s === 'object' && !hasMismatchedCid(s)) {
+          state = s;
+        }
+      } catch {}
+    }
+
+    // 路径 A：agentStateProvider.getState() 直读
+    if (state) {
+      const directCandidates = [
+        state.contextWindowUsage,
+        state.trajectorySlice?.contextWindowUsage,
+        state.cascadeState?.contextWindowUsage,
+        state.summary?.contextWindowUsage,
+        state.metadata?.contextWindowUsage,
+        ctx?.state?.contextWindowUsage
+      ];
+      for (const cand of directCandidates) {
+        if (cand && typeof cand === 'object' && !hasMismatchedCid(cand)) {
+          const metrics = extractContextUsageMetrics(cand);
+          if (metrics) return { metrics, sourcePath: 'provider-state', state };
+        }
+      }
+      const deepStateHit = searchUsageInObject(state, 4, 80);
+      if (deepStateHit) return { metrics: deepStateHit, sourcePath: 'provider-state', state };
+    }
+
+    // 路径 B：targetBox 向上遍历 React Fiber 树（memoizedProps / hooks / context dependencies）
+    try {
+      const fiberKey = Object.keys(targetBox).find(k => k.startsWith('__reactFiber'));
+      if (fiberKey) {
+        let curr = targetBox[fiberKey];
+        let depth = 0;
+        while (curr && depth < 40) {
+          depth++;
+          if (curr.memoizedProps) {
+            const propHit = searchUsageInObject(curr.memoizedProps, 2, 30);
+            if (propHit) return { metrics: propHit, sourcePath: 'fiber-tree', state };
+          }
+          let hook = curr.memoizedState;
+          let hookCount = 0;
+          while (hook && typeof hook === 'object' && hookCount < 25) {
+            hookCount++;
+            if (hook.memoizedState && typeof hook.memoizedState === 'object') {
+              const hookHit = searchUsageInObject(hook.memoizedState, 2, 20);
+              if (hookHit) return { metrics: hookHit, sourcePath: 'fiber-tree', state };
+            }
+            if (hook.baseState && typeof hook.baseState === 'object' && hook.baseState !== hook.memoizedState) {
+              const baseHit = searchUsageInObject(hook.baseState, 2, 20);
+              if (baseHit) return { metrics: baseHit, sourcePath: 'fiber-tree', state };
+            }
+            hook = hook.next;
+          }
+          let dep = curr.dependencies?.firstContext;
+          let depCount = 0;
+          while (dep && typeof dep === 'object' && depCount < 15) {
+            depCount++;
+            const depVal = dep.context?._currentValue;
+            if (depVal && typeof depVal === 'object') {
+              const depHit = searchUsageInObject(depVal, 2, 20);
+              if (depHit) return { metrics: depHit, sourcePath: 'fiber-tree', state };
+            }
+            dep = dep.next;
+          }
+          curr = curr.return;
+        }
+      }
+    } catch {}
+
+    // 路径 C：前端状态步骤列表末尾 modelUsage 硬件级指标兜底
+    if (state) {
+      const steps = state.trajectorySlice?.steps || state.steps;
+      const stepHit = extractUsageFromFiberSteps(steps);
+      if (stepHit) return { metrics: stepHit, sourcePath: 'fiber-steps', state };
+    }
+
+    return null;
+  }
+
+  function getFiberAuthoritativeSnapshot(targetBox, cid, modelEl) {
+    const hit = findFiberContextWindowUsage(targetBox, cid);
+    if (!hit || !hit.metrics || !(hit.metrics.used > 0)) return null;
+
+    const lowerCid = cid.toLowerCase();
+    const { used, limit: metricsLimit, lastStepIndex, compacted, model: usageModel } = hit.metrics;
+    const modelHint = extractPaneModelHint(targetBox, modelEl);
+    const triggerEl = modelEl || targetBox?.querySelector?.('[data-testid="model-selector-trigger"],button[aria-label*="选择模型"],button[aria-label*="Select model"]') || null;
+
+    let limit = 0;
+    if (metricsLimit >= 4000) {
+      limit = metricsLimit;
+      if (modelHint) {
+        updateClientModelLimits([[modelHint, limit]], !isStorageDegraded);
+      }
+      if (usageModel) {
+        updateClientModelLimits([[usageModel, limit]], !isStorageDegraded);
+      }
+    } else {
+      limit = inferClientModelLimit(modelHint || usageModel, triggerEl);
+    }
+
+    const existing = getCachedSnapshot(lowerCid);
+    let compressionDetected = Boolean(compacted || existing?.compressionDetected);
+    let compressionDrop = Number(existing?.compressionDrop) || 0;
+    if (existing && !existing.isEstimated && existing.used > 0 && used < existing.used) {
+      const stepAdvanced = lastStepIndex === null || typeof existing.lastStepIndex !== 'number' || lastStepIndex >= existing.lastStepIndex;
+      if (stepAdvanced) {
+        const drop = existing.used - used;
+        if (drop >= 15000 && (drop / existing.used) >= 0.25) {
+          compressionDetected = true;
+          compressionDrop = Math.max(compressionDrop, drop);
+        }
+      }
+    }
+
+    const ratio = limit > 0 ? Math.min(Math.max(used / limit, 0), 1) : 0;
+    const percent = (ratio * 100).toFixed(1) + '%';
+    const usedK = formatTokens(used);
+    const limitK = formatTokens(limit);
+    const stepCount = hit.state?.trajectorySlice?.totalStepsLength || (Array.isArray(hit.state?.turns) ? hit.state.turns.length : 0);
+
+    ringMetrics.fiberAuthHits++;
+    ringMetrics.fiberAuthSource = hit.sourcePath;
+
+    return {
+      ready: true,
+      cid: lowerCid,
+      conversationId: lowerCid,
+      used,
+      limit,
+      ratio,
+      percent,
+      usedK,
+      limitK,
+      modelId: modelHint || usageModel || null,
+      isEstimated: false,
+      source: 'fiber-context-usage',
+      lastStepIndex,
+      compressionDetected,
+      compressionDrop,
+      isOverLimit: used >= limit,
+      stepCount,
+      totalSteps: stepCount
+    };
+  }
+
   // 从指定分屏的 React Fiber 提取实时步骤数进行 0ms 快速估算（用于无缓存冷会话秒开垫底）
   function getFiberQuickEstimate(targetBox, cid, modelEl) {
     if (!cid) return null;
@@ -1567,16 +1913,21 @@ function installAgContextRingWidget() {
       if (cached) {
         updatePaneView(inst, cached);
       } else {
-        const fiberEst = getFiberQuickEstimate(inst.box, cid, inst.model);
-        if (fiberEst) {
-          updatePaneView(inst, fiberEst);
+        const fiberAuth = getFiberAuthoritativeSnapshot(inst.box, cid, inst.model);
+        if (fiberAuth) {
+          updatePaneView(inst, fiberAuth);
         } else {
-          updatePaneView(inst, {
-            ready: true,
-            isPending: true,
-            ratio: 0.15,
-            tooltip: '正在同步上下文进度...'
-          });
+          const fiberEst = getFiberQuickEstimate(inst.box, cid, inst.model);
+          if (fiberEst) {
+            updatePaneView(inst, fiberEst);
+          } else {
+            updatePaneView(inst, {
+              ready: true,
+              isPending: true,
+              ratio: 0.15,
+              tooltip: '正在同步上下文进度...'
+            });
+          }
         }
       }
     }
@@ -1592,12 +1943,22 @@ function installAgContextRingWidget() {
     const seq = ++inst.fetchSeq;
     let data = null;
     let modelHint = '';
+    let usedFiberCooldown = false;
     try {
       modelHint = extractPaneModelHint(inst.box, inst.model);
       inst.lastModelHint = modelHint;
-      // 历史会话的纯下拉变化只更新 fallback 提示；force 仅由真实 agent 状态变化等调用方显式触发
-      const reqOptions = modelHint ? { ...syncOptions, fallbackModel: modelHint } : syncOptions;
-      data = await fetchSnapshotDeduped(cid, reqOptions);
+      if (Date.now() < (inst.rpcCooldownUntil || 0)) {
+        const quickFiberAuth = getFiberAuthoritativeSnapshot(inst.box, cid, inst.model);
+        if (quickFiberAuth) {
+          usedFiberCooldown = true;
+          data = quickFiberAuth;
+        }
+      }
+      if (!usedFiberCooldown) {
+        // 历史会话的纯下拉变化只更新 fallback 提示；force 仅由真实 agent 状态变化等调用方显式触发
+        const reqOptions = modelHint ? { ...syncOptions, fallbackModel: modelHint } : syncOptions;
+        data = await fetchSnapshotDeduped(cid, reqOptions);
+      }
     } catch {
       // 网络或桥接异常交由下方离线守卫处理
     }
@@ -1607,8 +1968,21 @@ function installAgContextRingWidget() {
       const returnedCid = (data?.cid || data?.conversationId || '').toLowerCase();
       const isCidMismatch = !!(returnedCid && returnedCid !== cid.toLowerCase());
 
-      if (data && data.ready && !isCidMismatch) {
+      if (data && data.ready && !isCidMismatch && !usedFiberCooldown) {
+        inst.rpcCooldownUntil = 0;
         setCachedSnapshot(cid, data, modelHint ? { modelHint } : {});
+        refreshSideQuestionDraftPreviews(cid);
+      }
+
+      const fiberAuth = (!usedFiberCooldown && (!data || !data.ready) && !isCidMismatch)
+        ? getFiberAuthoritativeSnapshot(inst.box, cid, inst.model)
+        : (usedFiberCooldown ? data : null);
+
+      if (fiberAuth && !isCidMismatch) {
+        const lowerCid = cid.toLowerCase();
+        const rev = (sessionRequestRevisions.get(lowerCid) || 0) + 1;
+        sessionRequestRevisions.set(lowerCid, rev);
+        setCachedSnapshot(cid, fiberAuth, modelHint ? { modelHint, revision: rev } : { revision: rev });
         refreshSideQuestionDraftPreviews(cid);
       }
 
@@ -1619,9 +1993,15 @@ function installAgContextRingWidget() {
       if (getActiveConversationId(inst.box, currentTotal) !== cid) return;
       if (isDraftView(inst.box, currentTotal)) return;
 
-      if (data && data.ready && !isCidMismatch) {
+      if (data && data.ready && !isCidMismatch && !usedFiberCooldown) {
         inst.consecutiveFailures = 0;
         updatePaneView(inst, getCachedSnapshot(cid) || data);
+      } else if (fiberAuth && !isCidMismatch) {
+        inst.consecutiveFailures = 0;
+        if (!usedFiberCooldown) {
+          inst.rpcCooldownUntil = Date.now() + 60000;
+        }
+        updatePaneView(inst, getCachedSnapshot(cid) || fiberAuth);
       } else {
         inst.consecutiveFailures++;
         const isCurrentDataValid = inst.currentData &&
@@ -1775,6 +2155,7 @@ function installAgContextRingWidget() {
         consecutiveFailures: 0,
         pollTimer: null,
         agentStateDebounceTimer: null,
+        rpcCooldownUntil: 0,
         subscribedProvider: null,
         disposeAgentState: null
       };
@@ -1947,16 +2328,21 @@ function installAgContextRingWidget() {
         if (cached) {
           updatePaneView(inst, cached, true);
         } else {
-          const fiberEst = getFiberQuickEstimate(box, cid, model);
-          if (fiberEst) {
-            updatePaneView(inst, fiberEst, true);
+          const fiberAuth = getFiberAuthoritativeSnapshot(box, cid, model);
+          if (fiberAuth) {
+            updatePaneView(inst, fiberAuth, true);
           } else {
-            updatePaneView(inst, {
-              ready: true,
-              isPending: true,
-              ratio: 0.15,
-              tooltip: '正在同步上下文进度...'
-            }, true);
+            const fiberEst = getFiberQuickEstimate(box, cid, model);
+            if (fiberEst) {
+              updatePaneView(inst, fiberEst, true);
+            } else {
+              updatePaneView(inst, {
+                ready: true,
+                isPending: true,
+                ratio: 0.15,
+                tooltip: '正在同步上下文进度...'
+              }, true);
+            }
           }
         }
       }
@@ -2103,5 +2489,7 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports.clearClientModelLimits = __agRingCacheModule.clearClientModelLimits;
   module.exports.normalizeClientModelKey = __agRingCacheModule.normalizeClientModelKey;
   module.exports.resolveClientModelFamily = __agRingCacheModule.resolveClientModelFamily;
+  module.exports.extractContextUsageMetrics = __agRingCacheModule.extractContextUsageMetrics;
+  module.exports.extractUsageFromFiberSteps = __agRingCacheModule.extractUsageFromFiberSteps;
   module.exports.getRingColor = __agRingCacheModule.getRingColor;
 }

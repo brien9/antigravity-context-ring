@@ -329,7 +329,7 @@ async function ensurePs1Utf8Bom(filePath) {
 async function packageZip() {
   const distDir = join(SOURCE, 'dist');
   await mkdir(distDir, { recursive: true });
-  const pluginInfo = await readJson(join(SOURCE, 'plugin.json'), { version: '1.1.2' });
+  const pluginInfo = await readJson(join(SOURCE, 'plugin.json'), { version: '1.1.3' });
   const zipPath = join(distDir, `antigravity-context-ring-v${pluginInfo.version}.zip`);
 
   if (existsSync(zipPath)) {

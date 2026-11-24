@@ -1519,5 +1519,102 @@ test('【GetUserStatus 防兜底污染】未携带显式限额且未在静态表
   clearDynamicModelCatalog();
 });
 
+test('【GetUserStatus 同家族新枚举继承】未携带显式限额但 label 命中静态已知家族时，自动继承 512K 与 Orchestrator 搭档保护', async () => {
+  clearDynamicModelCatalog();
+
+  async function mockRpc(_target, method, params) {
+    if (method === 'GetUserStatus') {
+      return {
+        userStatus: {
+          cascadeModelConfigData: {
+            clientModelConfigs: [
+              {
+                modelId: 'gemini-4-carbon-medium',
+                label: 'Gemini 4 Carbon (Medium)',
+                modelOrAlias: { model: 'MODEL_PLACEHOLDER_M671' }
+              },
+              {
+                modelId: 'orchestrator-gemini-4-neon-high',
+                label: 'Orchestrator Gemini 4 Neon High',
+                modelOrAlias: { model: 'MODEL_PLACEHOLDER_M538' }
+              }
+            ]
+          }
+        }
+      };
+    }
+    if (method === 'GetCascadeTrajectorySteps') {
+      if (params?.cascadeId === 'mock-new-carbon-enum') {
+        return {
+          steps: [
+            {
+              stepIndex: 0,
+              type: StepType.USER_INPUT,
+              userInput: {
+                userResponse: 'hello carbon',
+                userConfig: { plannerConfig: { planModel: 'MODEL_PLACEHOLDER_M671' } }
+              }
+            },
+            {
+              stepIndex: 1,
+              type: StepType.CHECKPOINT,
+              metadata: {
+                modelUsage: {
+                  model: 'MODEL_PLACEHOLDER_M671',
+                  inputTokens: 128_000,
+                  outputTokens: 0,
+                  cacheReadTokens: 0,
+                  cacheCreationTokens: 0
+                }
+              }
+            }
+          ]
+        };
+      }
+      if (params?.cascadeId === 'mock-new-orch-enum') {
+        return {
+          steps: [
+            {
+              stepIndex: 0,
+              type: StepType.USER_INPUT,
+              userInput: {
+                userResponse: 'hello orch',
+                userConfig: { plannerConfig: { planModel: 'MODEL_PLACEHOLDER_M538' } }
+              }
+            },
+            {
+              stepIndex: 1,
+              type: StepType.CHECKPOINT,
+              metadata: {
+                generatorModel: 'MODEL_PLACEHOLDER_M669',
+                modelUsage: {
+                  model: 'MODEL_PLACEHOLDER_M669',
+                  inputTokens: 256_000,
+                  outputTokens: 0,
+                  cacheReadTokens: 0,
+                  cacheCreationTokens: 0
+                }
+              }
+            }
+          ]
+        };
+      }
+    }
+    return {};
+  }
+
+  const carbonSnap = await getContextSnapshot('mock-new-carbon-enum', true, { _ls: { port: 9999 }, _rpcCall: mockRpc });
+  assert.equal(carbonSnap.isUnknownModel, false);
+  assert.equal(carbonSnap.limit, 512_000, 'MODEL_PLACEHOLDER_M671 应通过同家族 label 自动继承 Gemini 4 Carbon 512K');
+  assert.equal(carbonSnap.modelLimits?.['MODEL_PLACEHOLDER_M671'], 512_000);
+
+  const orchSnap = await getContextSnapshot('mock-new-orch-enum', true, { _ls: { port: 9999 }, _rpcCall: mockRpc });
+  assert.equal(orchSnap.isUnknownModel, false);
+  assert.equal(orchSnap.selectedModel, 'MODEL_PLACEHOLDER_M538', 'MODEL_PLACEHOLDER_M538 应继承 Orchestrator 家族，不被 M669 覆盖');
+  assert.equal(orchSnap.limit, 512_000, 'MODEL_PLACEHOLDER_M538 应继承 512K 并受 M669 搭档保护');
+  assert.equal(orchSnap.modelLimits?.['MODEL_PLACEHOLDER_M538'], 512_000);
+  clearDynamicModelCatalog();
+});
+
 
 

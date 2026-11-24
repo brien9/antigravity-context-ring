@@ -616,6 +616,10 @@ test('【行为级 8】extractPaneModelHint 剥离 UI 徽章词 (新/New/注意/
     { text: 'GPT-OSS 120B (Medium) 注意', aria: '', expected: 'GPT-OSS 120B (Medium)' },
     { text: 'Gemini 4 Carbon (High) Notice', aria: '', expected: 'Gemini 4 Carbon (High)' },
     { text: 'Orchestrator (Argon) (Unavailable)', aria: '', expected: 'Orchestrator (Argon)' },
+    { text: 'Gemini 4 Argon Medium Leaving Soon', aria: '', expected: 'Gemini 4 Argon Medium' },
+    { text: 'Gemini 3.8 Flash (Medium) Leaving Soon', aria: '', expected: 'Gemini 3.8 Flash (Medium)' },
+    { text: 'Orchestrator Gemini 4 Neon High New', aria: '', expected: 'Orchestrator Gemini 4 Neon High' },
+    { text: 'Gemini 4 Argon (Medium) 即将下线', aria: '', expected: 'Gemini 4 Argon (Medium)' },
     { text: '', aria: 'Select model: Gemini 4 Hydrogen (Low) （新）', expected: 'Gemini 4 Hydrogen (Low)' },
     { text: '   ', aria: '选择模型：GPT-OSS 120B (Medium) Unavailable', expected: 'GPT-OSS 120B (Medium)' },
   ];

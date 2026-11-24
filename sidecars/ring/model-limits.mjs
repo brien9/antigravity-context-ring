@@ -132,6 +132,30 @@ export const MODEL_ID_ALIASES = {
   'gemini-pro-orchestrator-g1-pro': 'MODEL_PLACEHOLDER_M668',
   'orchestrator-neon': 'MODEL_PLACEHOLDER_M537',
   'gemini-pro-orchestrator-neon': 'MODEL_PLACEHOLDER_M537',
+  'orchestrator-gemini-4-neon': 'MODEL_PLACEHOLDER_M537',
+  'orchestrator-gemini-4-neon-high': 'MODEL_PLACEHOLDER_M537',
+  'orchestrator-gemini-4-neon-medium': 'MODEL_PLACEHOLDER_M537',
+  'orchestrator-gemini-4-neon-low': 'MODEL_PLACEHOLDER_M537',
+  'orchestrator-gemini-4-neon-xhigh': 'MODEL_PLACEHOLDER_M537',
+  'orchestrator-gemini-4-neon-extra': 'MODEL_PLACEHOLDER_M537',
+  'orchestrator-gemini-4-argon': 'MODEL_PLACEHOLDER_M668',
+  'orchestrator-gemini-4-argon-high': 'MODEL_PLACEHOLDER_M668',
+  'orchestrator-gemini-4-argon-medium': 'MODEL_PLACEHOLDER_M668',
+  'orchestrator-gemini-4-argon-low': 'MODEL_PLACEHOLDER_M668',
+  'orchestrator-gemini-4-argon-xhigh': 'MODEL_PLACEHOLDER_M668',
+  'orchestrator-gemini-4-argon-extra': 'MODEL_PLACEHOLDER_M668',
+  'orchestrator-gemini-4-hydrogen': 'MODEL_PLACEHOLDER_M537',
+  'orchestrator-gemini-4-hydrogen-high': 'MODEL_PLACEHOLDER_M537',
+  'orchestrator-gemini-4-hydrogen-medium': 'MODEL_PLACEHOLDER_M537',
+  'orchestrator-gemini-4-hydrogen-low': 'MODEL_PLACEHOLDER_M537',
+  'orchestrator-gemini-4-hydrogen-xhigh': 'MODEL_PLACEHOLDER_M537',
+  'orchestrator-gemini-4-hydrogen-extra': 'MODEL_PLACEHOLDER_M537',
+  'orchestrator-gemini-4-carbon': 'MODEL_PLACEHOLDER_M537',
+  'orchestrator-gemini-4-carbon-high': 'MODEL_PLACEHOLDER_M537',
+  'orchestrator-gemini-4-carbon-medium': 'MODEL_PLACEHOLDER_M537',
+  'orchestrator-gemini-4-carbon-low': 'MODEL_PLACEHOLDER_M537',
+  'orchestrator-gemini-4-carbon-xhigh': 'MODEL_PLACEHOLDER_M537',
+  'orchestrator-gemini-4-carbon-extra': 'MODEL_PLACEHOLDER_M537',
   'gemini-flash-worker-agy': 'MODEL_PLACEHOLDER_M669',
   'gemini-flash': 'MODEL_PLACEHOLDER_M669',
   'gemini-4-carbon': 'MODEL_PLACEHOLDER_M670',
@@ -217,7 +241,7 @@ const KNOWN_MODEL_KEYWORDS = [
   'gemini',
 ];
 
-const UI_BADGE_TOKENS = new Set(['新', 'new', '注意', 'notice', 'unavailable', '1m', '2m']);
+const UI_BADGE_TOKENS = new Set(['新', 'new', '注意', 'notice', 'unavailable', 'leaving', 'soon', 'deprecated', '即将下线', '即将停用', '即将移除', '1m', '2m']);
 
 /**
  * 归一化模型标识或 UI 显示名（去括号、剥离 UI 状态与容量角标词并统一分隔符为连字符），用于跨表示法匹配
@@ -231,9 +255,9 @@ export function normalizeModelLookupKey(modelId = '') {
     .replace(/\s*[·•|]\s*\d+(?:\.\d+)?\s*[km]\b(?:\s*context)?/gi, ' ')
     .replace(/\(\s*\d+(?:\.\d+)?\s*[km]\b(?:\s*context)?\s*\)/gi, ' ')
     .replace(/[()（）·•|]/g, ' ')
-    // 兼容紧凑拼接的中文状态词（如 "Medium新"、"Carbon注意"）
-    .replace(/([a-z0-9])(注意|新)(?=$|[\s_-])/g, '$1 $2')
-    .replace(/(^|[\s_-])(注意|新)([a-z0-9])/g, '$1$2 $3')
+    // 兼容紧凑拼接的中文状态词（如 "Medium新"、"Carbon注意"、"Medium即将下线"）
+    .replace(/([a-z0-9])(注意|新|即将下线|即将停用|即将移除)(?=$|[\s_-])/g, '$1 $2')
+    .replace(/(^|[\s_-])(注意|新|即将下线|即将停用|即将移除)([a-z0-9])/g, '$1$2 $3')
     .replace(/[\s_]+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
@@ -294,7 +318,10 @@ function lookupDynamicLimit(dynamicLimits, cleanId) {
   return undefined;
 }
 
-function resolveCanonicalKey(cleanId, dynamicAliases = null) {
+export function resolveStaticCanonicalKey(modelId = '') {
+  if (!modelId || typeof modelId !== 'string') return null;
+  const cleanId = modelId.trim();
+  if (!cleanId) return null;
   if (Object.hasOwn(PLATFORM_CONTEXT_LIMITS, cleanId)) return cleanId;
   const upper = cleanId.toUpperCase();
   if (Object.hasOwn(PLATFORM_CONTEXT_LIMITS, upper)) return upper;
@@ -302,11 +329,20 @@ function resolveCanonicalKey(cleanId, dynamicAliases = null) {
   if (norm && Object.hasOwn(MODEL_ID_ALIASES, norm)) {
     return MODEL_ID_ALIASES[norm];
   }
-  if (dynamicAliases) {
-    const aliasTarget = lookupDynamicAlias(dynamicAliases, cleanId);
-    if (typeof aliasTarget === 'string' && aliasTarget.trim() && aliasTarget.trim() !== cleanId) {
-      return resolveCanonicalKey(aliasTarget.trim(), null) || aliasTarget.trim();
+  if (norm && norm.startsWith('orchestrator-')) {
+    const subModel = norm.slice('orchestrator-'.length);
+    if (subModel.includes('argon')) return 'MODEL_PLACEHOLDER_M668';
+    if (
+      subModel.includes('neon') ||
+      subModel.includes('hydrogen') ||
+      subModel.includes('carbon') ||
+      subModel.includes('gemini-4')
+    ) {
+      return 'MODEL_PLACEHOLDER_M537';
     }
+    const subCanonical = resolveStaticCanonicalKey(subModel);
+    if (subCanonical) return subCanonical;
+    return 'MODEL_PLACEHOLDER_M537';
   }
   if (
     norm &&
@@ -316,6 +352,18 @@ function resolveCanonicalKey(cleanId, dynamicAliases = null) {
     )
   ) {
     return 'MODEL_CLAUDE_4_SONNET';
+  }
+  return null;
+}
+
+function resolveCanonicalKey(cleanId, dynamicAliases = null) {
+  const staticHit = resolveStaticCanonicalKey(cleanId);
+  if (staticHit) return staticHit;
+  if (dynamicAliases) {
+    const aliasTarget = lookupDynamicAlias(dynamicAliases, cleanId);
+    if (typeof aliasTarget === 'string' && aliasTarget.trim() && aliasTarget.trim() !== cleanId) {
+      return resolveCanonicalKey(aliasTarget.trim(), null) || aliasTarget.trim();
+    }
   }
   return null;
 }
@@ -456,15 +504,16 @@ export function resolveModelFamilyKey(modelId = '', dynamicAliases = null) {
   if (!modelId || typeof modelId !== 'string') return '';
   const cleanId = modelId.trim();
   if (!cleanId) return '';
+  const rawNorm = normalizeModelLookupKey(cleanId);
   const canonical = resolveCanonicalKey(cleanId, dynamicAliases);
   const norm = normalizeModelLookupKey(canonical || cleanId);
   if (!norm) return '';
 
+  if (/(?:^|-)m(?:66[78]|537)(?=$|-)/.test(norm) || rawNorm.includes('orchestrator') || norm.includes('orchestrator')) {
+    return 'FAMILY_ORCHESTRATOR';
+  }
   if (/(?:^|-)m(?:52[5-9]|43[2-4])(?=$|-)/.test(norm) || norm.includes('hydrogen')) {
     return 'FAMILY_HYDROGEN';
-  }
-  if (/(?:^|-)m(?:66[78]|537)(?=$|-)/.test(norm) || norm.includes('orchestrator')) {
-    return 'FAMILY_ORCHESTRATOR';
   }
   if (/(?:^|-)m53[0-6](?=$|-)/.test(norm) || norm.includes('neon')) {
     return 'FAMILY_NEON';

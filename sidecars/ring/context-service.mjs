@@ -9,6 +9,7 @@ import {
   isSameModelFamily,
   shouldApplyRuntimeLimit,
   hasCustomLimitOverride,
+  resolveStaticCanonicalKey,
 } from './model-limits.mjs';
 
 const memoryCache = new Map();
@@ -161,26 +162,48 @@ export async function resolveDynamicModelState(calc, lsRef, rpcCaller, options =
       for (const cfg of configs) {
         if (!cfg || typeof cfg !== 'object') continue;
         const canonicalModel = typeof cfg.modelOrAlias?.model === 'string' ? cfg.modelOrAlias.model.trim() : '';
-        const primaryToken = canonicalModel || cfg.modelId || cfg.label;
+        const candidateTokens = [canonicalModel, cfg.modelId, cfg.label]
+          .filter(t => typeof t === 'string' && t.trim())
+          .map(t => t.trim());
         const rawCfgLimit = cfg.maxContextTokens ?? cfg.maxTokens ?? cfg.contextWindowTokens ?? cfg.modelOrAlias?.maxContextTokens;
         const cfgLimit = (rawCfgLimit !== undefined && rawCfgLimit !== null) ? Number(rawCfgLimit) : NaN;
         const hasExplicitCfgLimit = Number.isSafeInteger(cfgLimit) && cfgLimit > 0;
-        const hasCatalogedLimit = isCatalogedModel(
-          primaryToken,
-          options.customLimits,
-          dynamicModelCatalog.aliases,
-          null,
-          dynamicModelCatalog.limits
-        );
-        registerDynamicModelToken(canonicalModel, canonicalModel);
-        registerDynamicModelToken(cfg.modelId, canonicalModel);
-        registerDynamicModelToken(cfg.label, canonicalModel);
+
+        let catalogedToken = '';
+        for (const tok of candidateTokens) {
+          if (isCatalogedModel(tok, options.customLimits, dynamicModelCatalog.aliases, null, dynamicModelCatalog.limits)) {
+            catalogedToken = tok;
+            break;
+          }
+        }
+        const hasCatalogedLimit = Boolean(catalogedToken);
+
+        let staticCanonical = canonicalModel ? resolveStaticCanonicalKey(canonicalModel) : null;
+        if (!staticCanonical) {
+          for (const tok of [cfg.modelId, cfg.label]) {
+            if (typeof tok === 'string' && tok.trim()) {
+              const hit = resolveStaticCanonicalKey(tok.trim());
+              if (hit) {
+                staticCanonical = hit;
+                break;
+              }
+            }
+          }
+        }
+
+        const aliasTarget = (!canonicalModel || resolveStaticCanonicalKey(canonicalModel))
+          ? canonicalModel
+          : (staticCanonical || canonicalModel);
+
+        registerDynamicModelToken(canonicalModel, aliasTarget);
+        registerDynamicModelToken(cfg.modelId, canonicalModel || aliasTarget);
+        registerDynamicModelToken(cfg.label, canonicalModel || aliasTarget);
 
         if (hasExplicitCfgLimit || hasCatalogedLimit) {
           const effectiveCfgLimit = hasExplicitCfgLimit
             ? cfgLimit
             : getPlatformTruncationLimit(
-                primaryToken,
+                catalogedToken,
                 options.customLimits,
                 dynamicModelCatalog.aliases,
                 dynamicModelCatalog.limits

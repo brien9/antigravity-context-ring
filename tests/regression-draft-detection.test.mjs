@@ -1696,4 +1696,263 @@ test('【前端 v2.33 模型对齐】inferClientModelLimit 与 resolveClientMode
   assert.equal(resolveClientModelFamily('MODEL_PLACEHOLDER_M537'), 'orchestrator');
 });
 
+test('【前端 v2.35 模型对齐】支持 Leaving Soon / 即将下线角标剥离、Carbon 多档位与 Orchestrator Gemini 4 复合命名', () => {
+  const {
+    inferClientModelLimit,
+    resolveClientModelFamily,
+    normalizeClientModelKey,
+    clearClientModelLimits
+  } = installAgContextRingWidget;
+  clearClientModelLimits();
+
+  assert.equal(normalizeClientModelKey('Gemini 4 Argon Medium Leaving Soon'), 'gemini-4-argon-medium');
+  assert.equal(normalizeClientModelKey('Gemini 3.8 Flash Medium Leaving Soon'), 'gemini-3-8-flash-medium');
+  assert.equal(normalizeClientModelKey('Gemini 4 Argon (Medium) 即将下线'), 'gemini-4-argon-medium');
+  assert.equal(normalizeClientModelKey('Orchestrator Gemini 4 Neon High New'), 'orchestrator-gemini-4-neon-high');
+
+  assert.equal(inferClientModelLimit('Gemini 4 Carbon Medium New'), 512_000);
+  assert.equal(inferClientModelLimit('Gemini 4 Argon Medium Leaving Soon'), 512_000);
+  assert.equal(inferClientModelLimit('Orchestrator Gemini 4 Neon High New'), 512_000);
+  assert.equal(inferClientModelLimit('Orchestrator Gemini 4 Hydrogen High'), 512_000);
+  assert.equal(inferClientModelLimit('Gemini 3.8 Flash Medium Leaving Soon'), 256_000);
+  assert.equal(inferClientModelLimit('Claude Opus 5.5 Medium New'), 256_000);
+  assert.equal(inferClientModelLimit('Claude Sonnet 5.5 Medium New'), 256_000);
+  assert.equal(inferClientModelLimit('GPT-OSS 120B (Medium) Notice'), 80_000);
+  assert.equal(inferClientModelLimit('Orchestrator Claude Opus 5.5'), 256_000);
+
+  assert.equal(resolveClientModelFamily('Orchestrator Gemini 4 Neon High New'), 'orchestrator');
+  assert.equal(resolveClientModelFamily('Orchestrator Gemini 4 Hydrogen High'), 'orchestrator');
+  assert.equal(resolveClientModelFamily('Gemini 4 Argon Medium Leaving Soon'), 'argon');
+  assert.equal(resolveClientModelFamily('Gemini 4 Carbon Medium New'), 'carbon');
+});
+
+test('【v2.35 Scoped Token 离线自愈】后端 RPC 不可用时无缝直读 Fiber contextWindowUsage、自学习上限、拒绝跨会话串台并冷却止损', async () => {
+  const { inferClientModelLimit, clearClientModelLimits } = installAgContextRingWidget;
+  const CID_MAIN = 'aaaa1111-2222-3333-4444-555566667777';
+  const CID_OTHER = 'bbbb1111-2222-3333-4444-555566668888';
+
+  const storageMap = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => storageMap.get(k) ?? null,
+    setItem: (k, v) => storageMap.set(k, String(v)),
+    removeItem: (k) => storageMap.delete(k)
+  };
+
+  let providerState = {
+    conversationId: CID_MAIN,
+    trajectorySlice: { totalStepsLength: 139 },
+    contextWindowUsage: {
+      estimatedTokensUsed: '184229',
+      maxContextTokens: '512000',
+      lastStepIndex: 138
+    },
+    otherSessions: {
+      [CID_OTHER]: {
+        conversationId: CID_OTHER,
+        contextWindowUsage: {
+          estimatedTokensUsed: '999999',
+          maxContextTokens: '256000',
+          lastStepIndex: 999
+        }
+      }
+    }
+  };
+  let onDidChangeCb = null;
+  const provider = {
+    getState: () => providerState,
+    onDidChange: (cb) => {
+      onDidChangeCb = cb;
+      return () => { onDidChangeCb = null; };
+    }
+  };
+
+  const shadowMap = new Map();
+  for (const id of ['ring-bar', 'tooltip-text', 'context-ring', 'ring-container', 'tooltip']) {
+    shadowMap.set(id, {
+      id,
+      style: {},
+      textContent: '',
+      hidden: true,
+      classList: { add() {}, remove() {} },
+      addEventListener() {},
+      removeEventListener() {},
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 19, height: 19 })
+    });
+  }
+
+  const mockBody = { isConnected: true, parentElement: null };
+  const flexContainer = {
+    isConnected: true,
+    insertedNodes: [],
+    contains(n) { return this.insertedNodes.includes(n); },
+    insertBefore(newNode) { this.insertedNodes.push(newNode); }
+  };
+  const box = {
+    isConnected: true,
+    parentElement: mockBody,
+    __reactFiber$test: {
+      memoizedProps: { cascadeContext: { state: { agentStateProvider: provider } } },
+      return: null
+    },
+    getClientRects: () => [{ width: 400, height: 100 }],
+    closest: () => null,
+    contains: () => true
+  };
+  const modelEl = {
+    isConnected: true,
+    parentElement: flexContainer,
+    get textContent() { return 'Gemini 4 Neon High'; },
+    getAttribute: () => '',
+    getClientRects: () => [{ width: 90, height: 24 }],
+    closest: (sel) => sel.includes('agent-input-box') ? box : (sel.includes('flex-1') ? flexContainer : null)
+  };
+  const editorEl = {
+    isConnected: true,
+    getClientRects: () => [{ width: 380, height: 60 }],
+    addEventListener() {},
+    removeEventListener() {},
+    closest: (sel) => sel.includes('agent-input-box') ? box : null
+  };
+
+  let rpcCallCount = 0;
+  globalThis.location = { pathname: `/c/${CID_MAIN}` };
+  globalThis.window = {
+    top: null,
+    innerWidth: 1440,
+    __agContextRingHost: {
+      getSnapshot: async () => {
+        rpcCallCount++;
+        return { ready: false };
+      }
+    },
+    addEventListener() {},
+    removeEventListener() {}
+  };
+  globalThis.window.top = globalThis.window;
+  globalThis.document = {
+    documentElement: {},
+    body: mockBody,
+    hidden: false,
+    activeElement: editorEl,
+    addEventListener() {},
+    removeEventListener() {},
+    querySelector: () => box,
+    querySelectorAll: (sel) => {
+      if (sel.includes('contenteditable')) return [editorEl];
+      if (sel.includes('model-selector-trigger')) return [modelEl];
+      return [];
+    },
+    createElement: () => ({
+      id: '',
+      style: {},
+      isConnected: true,
+      previousElementSibling: modelEl,
+      addEventListener() {},
+      remove() { this.isConnected = false; },
+      attachShadow: () => ({
+        innerHTML: '',
+        getElementById: (id) => shadowMap.get(id),
+        querySelector: () => ({ style: {} })
+      })
+    })
+  };
+  globalThis.getComputedStyle = () => ({ visibility: 'visible' });
+  globalThis.MutationObserver = class {
+    observe() {}
+    disconnect() {}
+  };
+
+  try {
+    clearClientModelLimits();
+    installAgContextRingWidget();
+    await new Promise((r) => setTimeout(r, 60));
+
+    // 1. 权威 Fiber ContextWindowUsage 接管，绝不显示 (离线) 或 (正在校准...)
+    const tip1 = shadowMap.get('tooltip-text').textContent;
+    assert.equal(tip1, '36.0% · 184.2K / 512.0K 上下文已使用');
+    assert.equal(tip1.includes('(离线)'), false);
+    assert.equal(tip1.includes('正在校准'), false);
+    assert.equal(inferClientModelLimit('Gemini 4 Neon High'), 512_000);
+    assert.equal(JSON.parse(storageMap.get('ag_ring_model_limits_v1'))['gemini-4-neon-high'], 512_000);
+
+    // 2. 60s 冷却期内更新 Fiber 用量并触发 onDidChange：实时刷新且不再发失败的后端 RPC
+    const callsAfterFirst = rpcCallCount;
+    providerState = {
+      conversationId: CID_MAIN,
+      trajectorySlice: { totalStepsLength: 142 },
+      contextWindowUsage: {
+        estimatedTokensUsed: '195000',
+        maxContextTokens: '512000',
+        lastStepIndex: 141
+      }
+    };
+    onDidChangeCb?.();
+    await new Promise((r) => setTimeout(r, 320));
+    assert.equal(rpcCallCount, callsAfterFirst, '冷却期内有权威 Fiber 指标时不得继续发送失败的后端 RPC');
+    assert.equal(shadowMap.get('tooltip-text').textContent, '38.1% · 195.0K / 512.0K 上下文已使用');
+
+    // 3. 断崖压缩 & compactedSinceLastCall 检测
+    providerState = {
+      conversationId: CID_MAIN,
+      trajectorySlice: { totalStepsLength: 145 },
+      contextWindowUsage: {
+        estimatedTokensUsed: '45000',
+        maxContextTokens: '512000',
+        lastStepIndex: 144,
+        compactedSinceLastCall: true
+      }
+    };
+    onDidChangeCb?.();
+    await new Promise((r) => setTimeout(r, 320));
+    assert.match(shadowMap.get('tooltip-text').textContent, /^8\.8% · 45\.0K \/ 512\.0K 上下文已压缩 释放 150\.0K$/);
+
+    // 4. 跨会话串台防护：若当前状态仅挂载其他会话 CID_OTHER 的 contextWindowUsage，绝不误读，回退到步骤 modelUsage 或估算
+    providerState = {
+      conversationId: CID_MAIN,
+      other: {
+        conversationId: CID_OTHER,
+        contextWindowUsage: {
+          estimatedTokensUsed: '490000',
+          maxContextTokens: '512000',
+          lastStepIndex: 500
+        }
+      },
+      trajectorySlice: {
+        totalStepsLength: 2,
+        steps: [
+          {
+            stepIndex: 1,
+            metadata: {
+              modelUsage: {
+                inputTokens: '10000',
+                cacheReadTokens: '40000',
+                cacheCreationTokens: '2000',
+                outputTokens: '500'
+              }
+            }
+          }
+        ]
+      }
+    };
+    storageMap.delete('ag_ring_snap_' + CID_MAIN);
+    globalThis.window.__agContextRingDispose?.();
+    installAgContextRingWidget();
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(
+      shadowMap.get('tooltip-text').textContent,
+      '10.3% · 52.5K / 512.0K 上下文已使用',
+      '必须跳过其他会话 contextWindowUsage 并回退解析当前会话步级 modelUsage (52.5K)'
+    );
+  } finally {
+    globalThis.window?.__agContextRingDispose?.();
+    clearClientModelLimits();
+    delete globalThis.location;
+    delete globalThis.window;
+    delete globalThis.document;
+    delete globalThis.localStorage;
+    delete globalThis.getComputedStyle;
+    delete globalThis.MutationObserver;
+  }
+});
+
 
