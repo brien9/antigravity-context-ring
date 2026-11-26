@@ -913,3 +913,38 @@ test('Antigravity v2.35 模型列表对齐: Leaving Soon 角标剥离、Carbon �
   assert.equal(isPlanExecutePartnerModel('Orchestrator Gemini 4 Neon High New', 'MODEL_PLACEHOLDER_M669'), true);
   assert.equal(isPlanExecutePartnerModel('Orchestrator Gemini 4 Hydrogen High', 'MODEL_PLACEHOLDER_M669'), true);
 });
+
+test('Antigravity v2.35.2 线上模型枚举对齐: M681 / M667 / Carbon M427-M438 归族与 M525 Plan-Execute 搭档', () => {
+  for (const id of [
+    'MODEL_PLACEHOLDER_M681',
+    'gemini-pro-orchestrator-argon',
+    'Orchestrator (Argon)',
+    'MODEL_PLACEHOLDER_M667',
+    'gemini-pro-orchestrator',
+    'Orchestrator (Carbon)',
+    'MODEL_PLACEHOLDER_M427',
+    'MODEL_PLACEHOLDER_M437',
+    'MODEL_PLACEHOLDER_M438',
+    'gemini-4-carbon-high',
+    'gemini-4-carbon-medium',
+    'gemini-4-carbon-low'
+  ]) {
+    assert.equal(getPlatformTruncationLimit(id), 512_000, `${id} 必须映射为 512K`);
+    assert.equal(isKnownModel(id), true, `${id} 必须识别为已知模型`);
+    assert.equal(isCatalogedModel(id), true, `${id} 必须已完成精确编目`);
+  }
+
+  assert.equal(resolveModelFamilyKey('MODEL_PLACEHOLDER_M681'), 'FAMILY_ORCHESTRATOR');
+  assert.equal(resolveModelFamilyKey('MODEL_PLACEHOLDER_M667'), 'FAMILY_ORCHESTRATOR');
+  assert.equal(resolveModelFamilyKey('MODEL_PLACEHOLDER_M427'), 'FAMILY_CARBON');
+  assert.equal(resolveModelFamilyKey('MODEL_PLACEHOLDER_M437'), 'FAMILY_CARBON');
+  assert.equal(resolveModelFamilyKey('MODEL_PLACEHOLDER_M438'), 'FAMILY_CARBON');
+  assert.equal(isSameModelFamily('MODEL_PLACEHOLDER_M427', 'Gemini 4 Carbon (High)'), true);
+  assert.equal(isSameModelFamily('MODEL_PLACEHOLDER_M437', 'Gemini 4 Carbon (Medium)'), true);
+  assert.equal(isSameModelFamily('MODEL_PLACEHOLDER_M438', 'Gemini 4 Carbon (Low)'), true);
+  assert.equal(isSameModelFamily('MODEL_PLACEHOLDER_M427', 'Gemini 4 Argon (High)'), false);
+
+  for (const orch of ['MODEL_PLACEHOLDER_M681', 'MODEL_PLACEHOLDER_M667', 'MODEL_PLACEHOLDER_M537']) {
+    assert.equal(isPlanExecutePartnerModel(orch, 'MODEL_PLACEHOLDER_M525'), true, `${orch} 与 M525 应识别为 Plan-Execute 搭档`);
+  }
+});

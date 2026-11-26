@@ -93,6 +93,7 @@ export class CdpConnection {
     this.pending = new Map();
     this.closed = false;
     this.onContextCreated = typeof options?.onContextCreated === 'function' ? options.onContextCreated : null;
+    this.lastSnapshotLog = new Map();
   }
 
   async open() {
@@ -191,12 +192,7 @@ export class CdpConnection {
         result.cid = reqCid;
         result.conversationId = result.conversationId || reqCid;
       }
-      if (result.ready) {
-        logBridge(`Snapshot OK: cid=${reqCid} force=${force} used=${result.used} (${result.usedK}) limit=${result.limitK} ratio=${result.percent}`);
-        console.log(`[ContextRing] Pushed snapshot: used=${result.used} (${result.usedK}) limit=${result.limitK} ratio=${result.percent}`);
-      } else {
-        logBridge(`Snapshot NOT ready: cid=${reqCid}`);
-      }
+      this._logSnapshotResult(reqCid, force, result);
     }
 
     if (this.closed) return;
@@ -208,6 +204,41 @@ export class CdpConnection {
         contextId: params.executionContextId
       });
     } catch {}
+  }
+
+  _logSnapshotResult(reqCid, force, result) {
+    const logKey = reqCid || '__default__';
+    const sig = result?.ready
+      ? `ok:${result.used}/${result.limit}/${result.percent}`
+      : 'not-ready';
+    const now = Date.now();
+    const prev = this.lastSnapshotLog.get(logKey);
+    const shouldEmit = !prev ||
+      prev.sig !== sig ||
+      (now - prev.at >= 60_000);
+
+    if (!shouldEmit) {
+      prev.suppressed++;
+      return;
+    }
+
+    const suppressed = prev?.suppressed || 0;
+    const suffix = suppressed > 0 ? ` (suppressed ${suppressed})` : '';
+    if (result?.ready) {
+      logBridge(`Snapshot OK: cid=${reqCid} force=${force} used=${result.used} (${result.usedK}) limit=${result.limitK} ratio=${result.percent}${suffix}`);
+    } else {
+      logBridge(`Snapshot NOT ready: cid=${reqCid}${suffix}`);
+    }
+
+    if (this.lastSnapshotLog.has(logKey)) {
+      this.lastSnapshotLog.delete(logKey);
+    } else if (this.lastSnapshotLog.size >= 100) {
+      const oldestKey = this.lastSnapshotLog.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.lastSnapshotLog.delete(oldestKey);
+      }
+    }
+    this.lastSnapshotLog.set(logKey, { sig, at: now, suppressed: 0 });
   }
 
   close() {

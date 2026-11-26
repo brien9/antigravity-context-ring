@@ -1616,5 +1616,91 @@ test('【GetUserStatus 同家族新枚举继承】未携带显式限额但 label
   clearDynamicModelCatalog();
 });
 
+test('【超大轨迹降级】GetCascadeTrajectorySteps 超过 50MB 抛出 ERR_RESPONSE_TOO_LARGE 时，自动降级走轻量 GeneratorMetadata 产出权威快照', async () => {
+  clearDynamicModelCatalog();
+  clearBackendTrajectoryCache('mock-oversized-cid');
+  let stepsCallCount = 0;
+
+  async function mockOversizedRpc(_target, method, params) {
+    if (method === 'GetCascadeTrajectorySteps') {
+      stepsCallCount++;
+      const err = new Error('RPC response too large');
+      err.code = 'ERR_RESPONSE_TOO_LARGE';
+      err.retryable = false;
+      throw err;
+    }
+    if (method === 'GetCascadeTrajectory') {
+      return {
+        numTotalSteps: 142,
+        numTotalGeneratorMetadata: 34
+      };
+    }
+    if (method === 'GetCascadeTrajectoryGeneratorMetadata') {
+      assert.equal(params.includeMessages, false);
+      assert.equal(params.generatorMetadataOffset, 0);
+      return {
+        generatorMetadata: [
+          {
+            plannerConfig: { planModel: 'MODEL_PLACEHOLDER_M535' },
+            chatModel: {
+              model: 'MODEL_PLACEHOLDER_M535',
+              usage: {
+                model: 'MODEL_PLACEHOLDER_M535',
+                inputTokens: '100000',
+                cacheReadTokens: '280000',
+                outputTokens: '2000'
+              },
+              chatStartMetadata: {
+                contextWindowMetadata: { maxContextTokens: 512_000, estimatedTokensUsed: 310_000 }
+              }
+            }
+          },
+          {
+            plannerConfig: { planModel: 'MODEL_PLACEHOLDER_M535' },
+            chatModel: {
+              model: 'MODEL_PLACEHOLDER_M535',
+              usage: {
+                model: 'MODEL_PLACEHOLDER_M535',
+                inputTokens: '2139',
+                cacheReadTokens: '261428',
+                outputTokens: '2492'
+              },
+              chatStartMetadata: {
+                contextWindowMetadata: { maxContextTokens: 512_000, estimatedTokensUsed: 253_386 }
+              }
+            }
+          }
+        ]
+      };
+    }
+    return {};
+  }
+
+  const snap = await getContextSnapshot('mock-oversized-cid', true, {
+    _ls: { port: 9999 },
+    _rpcCall: mockOversizedRpc
+  });
+
+  assert.equal(snap.ready, true, '超大轨迹必须通过 GeneratorMetadata 降级成功返回 ready: true');
+  assert.equal(snap.used, 266_059);
+  assert.equal(snap.limit, 512_000);
+  assert.equal(snap.lastStepIndex, 141);
+  assert.equal(snap.totalSteps, 142);
+  assert.equal(snap.compressionDetected, true, '降级路径同样应捕获历史压缩断崖');
+  assert.equal(_getTrajectoryCacheInfo().has('mock-oversized-cid'), false, '降级路径不得写入步骤分页增量缓存');
+  assert.equal(stepsCallCount, 1);
+
+  // 第 2 次以 force=true 刷新同一超大轨迹时，应直接走轻量降级通道，不再拉取 50MB Steps
+  const snap2 = await getContextSnapshot('mock-oversized-cid', true, {
+    _ls: { port: 9999 },
+    _rpcCall: mockOversizedRpc
+  });
+  assert.equal(snap2.ready, true);
+  assert.equal(snap2.used, 266_059);
+  assert.equal(stepsCallCount, 1, '已记忆的超大轨迹再次刷新不得重复拉取 GetCascadeTrajectorySteps');
+  clearBackendTrajectoryCache('mock-oversized-cid');
+  clearDynamicModelCatalog();
+});
+
 
 

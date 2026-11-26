@@ -244,6 +244,51 @@ describe('v1.1.2 守护进程韧性、热更新兼容与自适应架构回归套
     } finally {
       await new Promise(resolve => mockLsServer.close(resolve));
     }
+
+    // 3. Antigravity v2.35.2+ 兼容：GetUnleashData 返回 404 时，probePort / probeEnvLanguageServer 必须回退到 GetAllCascadeTrajectories 并严格校验 CSRF Token
+    const v235MockServer = createServer((req, res) => {
+      if (req.headers['x-codeium-csrf-token'] !== expectedToken) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 'unauthenticated', message: 'unauthenticated: invalid CSRF token' }));
+        return;
+      }
+      if (req.method === 'POST' && req.url === '/exa.language_server_pb.LanguageServerService/GetUnleashData') {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('404 page not found\n');
+        return;
+      }
+      if (req.method === 'POST' && req.url === '/exa.language_server_pb.LanguageServerService/GetAllCascadeTrajectories') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ trajectorySummaries: {} }));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+
+    await new Promise(resolve => v235MockServer.listen(0, '127.0.0.1', resolve));
+    const v235Port = v235MockServer.address().port;
+    try {
+      const v235Ok = await probeEnvLanguageServer({
+        ANTIGRAVITY_LS_ADDRESS: `localhost:${v235Port}`,
+        ANTIGRAVITY_CSRF_TOKEN: expectedToken,
+        ANTIGRAVITY_LS_PID: '65432'
+      }, 800);
+      assert.deepEqual(v235Ok, {
+        pid: 65432,
+        port: v235Port,
+        csrfToken: expectedToken,
+        useTls: false
+      }, 'GetUnleashData 404 时应通过 GetAllCascadeTrajectories 成功探活');
+
+      const v235BadTok = await probeEnvLanguageServer({
+        ANTIGRAVITY_LS_ADDRESS: `localhost:${v235Port}`,
+        ANTIGRAVITY_CSRF_TOKEN: 'wrong-token'
+      }, 500);
+      assert.equal(v235BadTok, null, '401 invalid CSRF token 时应立即拒绝并短路返回 null');
+    } finally {
+      await new Promise(resolve => { v235MockServer.closeAllConnections?.(); v235MockServer.close(resolve); });
+    }
   });
 
   test('R5: isAntigravityHostCommandLine 与 scanHostPids 免疫 swarm_board 等无界面 Sidecar 孤儿进程', () => {

@@ -210,13 +210,22 @@ export function sortCandidates(candidates, platform = process.platform) {
   });
 }
 
-/**
- * 探活指定端口与 TLS 组合
- */
-export function probePort(port, csrfToken, useTls, timeoutMs = 2000) {
-  if (!Number.isInteger(port) || port <= 0 || port > 65535 || typeof csrfToken !== 'string') {
-    return Promise.resolve(false);
+const PROBE_ENDPOINTS = [
+  {
+    path: '/exa.language_server_pb.LanguageServerService/GetAllCascadeTrajectories',
+    body: '{}'
+  },
+  {
+    path: '/exa.language_server_pb.LanguageServerService/GetUserStatus',
+    body: JSON.stringify({ metadata: { ideName: 'antigravity', extensionName: 'antigravity' } })
+  },
+  {
+    path: '/exa.language_server_pb.LanguageServerService/GetUnleashData',
+    body: JSON.stringify({ metadata: { ideName: 'antigravity', extensionName: 'antigravity' } })
   }
+];
+
+function probeRpcEndpoint(port, csrfToken, useTls, endpoint, timeoutMs = 2000) {
   return new Promise((rawResolve) => {
     // 单次结算守卫：响应中途断开时 socket 已销毁、timeout 不再触发，必须由 close 兜底结算，
     // 否则 inFlightDiscovery 永久挂起，后续所有发现请求都会复用这个死 Promise
@@ -228,14 +237,12 @@ export function probePort(port, csrfToken, useTls, timeoutMs = 2000) {
     };
     try {
       const transport = useTls ? https : http;
-      const postData = JSON.stringify({
-        metadata: { ideName: 'antigravity', extensionName: 'antigravity' }
-      });
+      const postData = endpoint.body;
 
       const req = transport.request({
         hostname: '127.0.0.1',
         port,
-        path: '/exa.language_server_pb.LanguageServerService/GetUnleashData',
+        path: endpoint.path,
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -249,35 +256,60 @@ export function probePort(port, csrfToken, useTls, timeoutMs = 2000) {
         let data = '';
         res.on('data', chunk => data += chunk);
         res.on('end', () => {
-          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+          const statusCode = res.statusCode ?? null;
+          if (statusCode && statusCode >= 200 && statusCode < 300) {
             try {
               const json = JSON.parse(data);
-              resolve(json !== null && typeof json === 'object');
+              resolve({
+                ok: json !== null && typeof json === 'object',
+                statusCode,
+                networkError: false,
+                authRejected: false
+              });
             } catch {
-              resolve(false);
+              resolve({ ok: false, statusCode, networkError: false, authRejected: false });
             }
           } else {
-            resolve(false);
+            const lowerBody = data.toLowerCase();
+            const authRejected = statusCode === 401 ||
+              lowerBody.includes('invalid csrf') ||
+              lowerBody.includes('unauthenticated');
+            resolve({ ok: false, statusCode, networkError: false, authRejected });
           }
         });
-        res.on('error', () => resolve(false));
+        res.on('error', () => resolve({ ok: false, statusCode: null, networkError: true, authRejected: false }));
         res.on('close', () => {
-          if (!res.complete) resolve(false);
+          if (!res.complete) resolve({ ok: false, statusCode: null, networkError: true, authRejected: false });
         });
       });
 
-      req.on('error', () => resolve(false));
+      req.on('error', () => resolve({ ok: false, statusCode: null, networkError: true, authRejected: false }));
       req.on('timeout', () => {
         req.destroy();
-        resolve(false);
+        resolve({ ok: false, statusCode: null, networkError: true, authRejected: false });
       });
 
       req.write(postData);
       req.end();
     } catch {
-      resolve(false);
+      resolve({ ok: false, statusCode: null, networkError: true, authRejected: false });
     }
   });
+}
+
+/**
+ * 探活指定端口与 TLS 组合（多端点兼容探测，按新旧版本优先级短路）
+ */
+export async function probePort(port, csrfToken, useTls, timeoutMs = 2000) {
+  if (!Number.isInteger(port) || port <= 0 || port > 65535 || typeof csrfToken !== 'string') {
+    return false;
+  }
+  for (const endpoint of PROBE_ENDPOINTS) {
+    const res = await probeRpcEndpoint(port, csrfToken, useTls, endpoint, timeoutMs);
+    if (res.ok) return true;
+    if (res.networkError || res.authRejected) return false;
+  }
+  return false;
 }
 
 /**
@@ -416,7 +448,7 @@ export function parseEnvLanguageServer(env = process.env) {
 /**
  * 探活环境变量注入的 Language Server 地址（零子进程开销，<3ms 极速直连）
  */
-export async function probeEnvLanguageServer(env = process.env, timeoutMs = 400) {
+export async function probeEnvLanguageServer(env = process.env, timeoutMs = 800) {
   const parsed = parseEnvLanguageServer(env);
   if (!parsed) return null;
   const working = await findWorkingPort([parsed.port], parsed.csrfToken, timeoutMs);
@@ -474,7 +506,7 @@ export async function discoverLanguageServer(forceRefresh = false) {
   if (!forceRefresh) {
     const diskCache = readDiskCache();
     if (diskCache) {
-      const alive = await probePort(diskCache.port, diskCache.csrfToken, diskCache.useTls, 250);
+      const alive = await probePort(diskCache.port, diskCache.csrfToken, diskCache.useTls, 400);
       if (alive) {
         cachedLsInfo = diskCache;
         cachedAllLsList = [diskCache];
@@ -486,7 +518,7 @@ export async function discoverLanguageServer(forceRefresh = false) {
 
     // 环境变量极速直连通道（当无可用磁盘缓存或宿主重启后旧端口已死时，优先探活官方注入的 ANTIGRAVITY_LS_ADDRESS）
     if (!process.env.AGY_TEST_TARGET_DIR) {
-      const envLs = await probeEnvLanguageServer(process.env, 350);
+      const envLs = await probeEnvLanguageServer(process.env, 800);
       if (envLs) {
         cachedLsInfo = envLs;
         cachedAllLsList = [envLs];

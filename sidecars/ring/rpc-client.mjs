@@ -86,7 +86,7 @@ export function rpcCall(ls, endpoint, body = {}, timeoutMs = 10000, signal = nul
         data += chunk;
         if (data.length > 50 * 1024 * 1024) { // 50MB 保护
           req.destroy();
-          safeReject(createRpcError('RPC response too large', { retryable: false }));
+          safeReject(createRpcError('RPC response too large', { retryable: false, code: 'ERR_RESPONSE_TOO_LARGE' }));
         }
       });
       res.on('end', () => {

@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { processTrajectorySteps, StepType } from '../sidecars/ring/context-calculator.mjs';
 import { formatContextResult, getBackendCachedSnapshot, setBackendCachedSnapshot } from '../sidecars/ring/context-service.mjs';
 import { isContextRingProcess, isAntigravityHostCommandLine } from '../sidecars/ring/main.mjs';
+import { CdpConnection } from '../sidecars/ring/runtime-bridge.mjs';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const installAgContextRingWidget = require('../assets/ring-widget.cjs');
-const { normalizeSnapshotSchema, shouldAcceptSnapshot, inferClientModelLimit } = installAgContextRingWidget;
+const { normalizeSnapshotSchema, shouldAcceptSnapshot, inferClientModelLimit, resolveClientModelFamily } = installAgContextRingWidget;
 
 test('【Argon 修复 1-A】ring-widget: syncPaneState 守卫拦截后绝不将脏数据直接上屏', () => {
   const widgetCode = readFileSync(resolve(__dirname, '../assets/ring-widget.cjs'), 'utf8');
@@ -470,4 +471,31 @@ test('【深度审计 Bug 6】main.mjs: Electron-as-Node (Antigravity.exe) Sidec
   assert.equal(isAntigravityHostCommandLine('"C:\\Antigravity.exe" --require "C:\\register_loader.js"', 207, currentPid), false, '包含 register_loader.js 的辅助进程不得被视为 GUI 宿主');
   assert.equal(isAntigravityHostCommandLine('"C:\\Antigravity.exe" "D:\\app\\main.mjs"', 208, currentPid), false, '直接运行 main.mjs 的节点进程不得被视为 GUI 宿主');
   assert.equal(isAntigravityHostCommandLine(realHostMainWin, currentPid, currentPid), false, '自身 PID 绝不能被视为宿主');
+});
+
+test('【v2.35.2 同步】ring-widget 模型归族/512K 推导与 CdpConnection 重复日志节流', () => {
+  assert.equal(inferClientModelLimit('MODEL_PLACEHOLDER_M681'), 512_000);
+  assert.equal(resolveClientModelFamily('MODEL_PLACEHOLDER_M681'), 'orchestrator');
+  assert.equal(resolveClientModelFamily('MODEL_PLACEHOLDER_M427'), 'carbon');
+  assert.equal(resolveClientModelFamily('MODEL_PLACEHOLDER_M437'), 'carbon');
+  assert.equal(resolveClientModelFamily('MODEL_PLACEHOLDER_M438'), 'carbon');
+
+  const conn = new CdpConnection('ws://127.0.0.1:0/test');
+  const logs = [];
+  const origLog = console.log;
+  console.log = (...args) => logs.push(args.join(' '));
+  try {
+    conn._logSnapshotResult('cid-throttle', false, { ready: false });
+    conn._logSnapshotResult('cid-throttle', false, { ready: false });
+    conn._logSnapshotResult('cid-throttle', false, { ready: false });
+    assert.equal(logs.length, 1, '连续相同的 Snapshot NOT ready 必须被节流为 1 条');
+
+    conn._logSnapshotResult('cid-throttle', false, { ready: true, used: 1000, limit: 512000, usedK: '1.0K', limitK: '512.0K', percent: '0.2%' });
+    conn._logSnapshotResult('cid-throttle', false, { ready: true, used: 1000, limit: 512000, usedK: '1.0K', limitK: '512.0K', percent: '0.2%' });
+    conn._logSnapshotResult('cid-throttle', true, { ready: true, used: 1000, limit: 512000, usedK: '1.0K', limitK: '512.0K', percent: '0.2%' });
+    assert.equal(logs.length, 2, '同一快照状态（含 force=true）仅首条输出且合并展示 suppressed 次数');
+    assert.ok(logs[1].includes('Snapshot OK:') && logs[1].includes('(suppressed 2)'));
+  } finally {
+    console.log = origLog;
+  }
 });

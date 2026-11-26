@@ -261,16 +261,16 @@ var __agRingCacheModule = (function() {
   function resolveClientModelFamily(raw) {
     const norm = normalizeClientModelKey(typeof raw === 'string' ? raw : '');
     if (!norm) return '';
-    if (norm.includes('orchestrator') || /(?:^|-)m(?:66[78]|537)(?=$|-)/.test(norm)) return 'orchestrator';
+    if (norm.includes('orchestrator') || /(?:^|-)m(?:66[78]|681|537)(?=$|-)/.test(norm)) return 'orchestrator';
     if (norm.includes('hydrogen') || /(?:^|-)m(?:52[5-9]|43[2-4])(?=$|-)/.test(norm)) return 'hydrogen';
     if (norm.includes('neon') || /(?:^|-)m53[0-6](?=$|-)/.test(norm)) return 'neon';
     if (
       norm.includes('argon') ||
-      /(?:^|-)m(?:41[7-9]|40[89]|41[0-3]|42[0-9]|43[01]|43[78])(?=$|-)/.test(norm)
+      /(?:^|-)m(?:41[7-9]|40[89]|41[0-3]|42[0-4]|42[89]|43[01])(?=$|-)/.test(norm)
     ) {
       return 'argon';
     }
-    if (norm.includes('carbon') || /(?:^|-)m670(?=$|-)/.test(norm)) return 'carbon';
+    if (norm.includes('carbon') || /(?:^|-)m(?:670|427|43[78])(?=$|-)/.test(norm)) return 'carbon';
     if (
       /(?:^|-)m(?:31[7-9]|32[0-2]|669|124|301)(?=$|-)/.test(norm) ||
       norm.includes('3-8-flash') ||
@@ -353,14 +353,14 @@ var __agRingCacheModule = (function() {
     }
 
     // 1. Gemini 4 全系列 (512K - 2026-11 Antigravity 平台侧翻倍放开):
-    //    Neon / Hydrogen / Argon / Carbon / Orchestrator (Gemini 4 Neon/Hydrogen/Argon/Carbon) 及对应内部 M408~M438 / M525~M537 / M667~M668 / M670
+    //    Neon / Hydrogen / Argon / Carbon / Orchestrator (Gemini 4 Neon/Hydrogen/Argon/Carbon) 及对应内部 M408~M438 / M525~M537 / M667~M668 / M670 / M681
     const isGemini4Series =
       lower.includes('neon') ||
       lower.includes('hydrogen') ||
       lower.includes('argon') ||
       lower.includes('carbon') ||
       /(?:^|[^a-z0-9])gemini[-_\s]?4(?=$|[^0-9])/.test(lower) ||
-      /(?:^|[^a-z0-9])m(?:40[89]|41[0-3]|41[7-9]|42[0-4]|42[7-9]|43[0-4]|43[78]|52[5-9]|53[0-7]|66[78]|670)(?=$|[^0-9])/.test(lower);
+      /(?:^|[^a-z0-9])m(?:40[89]|41[0-3]|41[7-9]|42[0-4]|42[7-9]|43[0-4]|43[78]|52[5-9]|53[0-7]|66[78]|670|681)(?=$|[^0-9])/.test(lower);
     const hasExplicitNonGemini4OrchestratorBase =
       lower.includes('orchestrator') &&
       !isGemini4Series &&

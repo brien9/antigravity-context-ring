@@ -327,6 +327,22 @@ export async function resolveRuntimeGeneratorMetadata(lsRef, rpcCaller, targetCa
 const trajectoryCache = new Map();
 const MAX_TRAJECTORY_CACHE_SIZE = 50;
 
+// 记忆已确认响应超过 50MB 的超大轨迹，后续刷新直走轻量 GeneratorMetadata 降级通道，避免每 8 秒重复拉取 50MB 流量
+const oversizedTrajectories = new Set();
+const MAX_OVERSIZED_TRAJECTORIES = 50;
+
+function markOversizedTrajectory(normCid) {
+  const key = normalizeCacheCid(normCid);
+  if (!key) return;
+  if (oversizedTrajectories.has(key)) {
+    oversizedTrajectories.delete(key);
+  } else if (oversizedTrajectories.size >= MAX_OVERSIZED_TRAJECTORIES) {
+    const oldest = oversizedTrajectories.values().next().value;
+    if (oldest !== undefined) oversizedTrajectories.delete(oldest);
+  }
+  oversizedTrajectories.add(key);
+}
+
 // 会话与语言服务器实例绑定映射 (Session-to-LanguageServer Binding)
 const sessionLsBindings = new Map();
 const MAX_SESSION_BINDINGS = 100;
@@ -373,6 +389,14 @@ export function is404RpcError(err) {
   return false;
 }
 
+export function isResponseTooLargeError(err) {
+  return Boolean(
+    err &&
+    (err.code === 'ERR_RESPONSE_TOO_LARGE' ||
+      (typeof err.message === 'string' && /response too large/i.test(err.message)))
+  );
+}
+
 export function getBackendTrajectoryCache(normCid) {
   const key = normalizeCacheCid(normCid);
   if (!key) return null;
@@ -382,9 +406,13 @@ export function getBackendTrajectoryCache(normCid) {
 export function clearBackendTrajectoryCache(normCid = null) {
   if (normCid) {
     const key = normalizeCacheCid(normCid);
-    if (key) trajectoryCache.delete(key);
+    if (key) {
+      trajectoryCache.delete(key);
+      oversizedTrajectories.delete(key);
+    }
   } else {
     trajectoryCache.clear();
+    oversizedTrajectories.clear();
   }
 }
 
@@ -936,6 +964,170 @@ export async function getContextSnapshot(conversationId = null, force = false, o
       return Array.isArray(stepsResp?.steps) ? stepsResp.steps : [];
     };
 
+    const fetchOversizedTrajectoryFallback = async () => {
+      let numTotalSteps = 0;
+      let numTotalGeneratorMetadata = 0;
+      try {
+        const trajResp = await rpcCaller(lsRef, 'GetCascadeTrajectory', {
+          cascadeId: targetCascadeId
+        }, 5000);
+        const rawTotalSteps = Number(trajResp?.numTotalSteps);
+        if (Number.isSafeInteger(rawTotalSteps) && rawTotalSteps > 0) {
+          numTotalSteps = rawTotalSteps;
+        }
+        const rawTotalGm = Number(trajResp?.numTotalGeneratorMetadata);
+        if (Number.isSafeInteger(rawTotalGm) && rawTotalGm > 0) {
+          numTotalGeneratorMetadata = rawTotalGm;
+        }
+      } catch {}
+
+      const gmOffset = (Number.isSafeInteger(numTotalGeneratorMetadata) && numTotalGeneratorMetadata > 200)
+        ? (numTotalGeneratorMetadata - 200)
+        : 0;
+      let gmResp = null;
+      try {
+        gmResp = await rpcCaller(lsRef, 'GetCascadeTrajectoryGeneratorMetadata', {
+          cascadeId: targetCascadeId,
+          generatorMetadataOffset: gmOffset,
+          includeMessages: false
+        }, 5000);
+      } catch {
+        return formatContextResult({ ready: false });
+      }
+
+      const list = gmResp?.generatorMetadata;
+      if (!Array.isArray(list) || list.length === 0) {
+        return formatContextResult({ ready: false });
+      }
+
+      const syntheticSteps = [];
+      let seqIdx = 0;
+      let latestRuntimeLimit;
+      let latestRuntimeModel = '';
+
+      for (const gm of list) {
+        if (!gm || typeof gm !== 'object') continue;
+        const gmModel = typeof gm?.chatModel?.model === 'string' ? gm.chatModel.model.trim() : '';
+        const displayName = typeof gm?.chatModel?.modelDisplayName === 'string' ? gm.chatModel.modelDisplayName.trim() : '';
+        const responseModel = typeof gm?.chatModel?.responseModel === 'string' ? gm.chatModel.responseModel.trim() : '';
+        const planModel = typeof gm?.plannerConfig?.planModel === 'string' ? gm.plannerConfig.planModel.trim() : '';
+        const modelName = typeof gm?.plannerConfig?.modelName === 'string' ? gm.plannerConfig.modelName.trim() : '';
+        const cw = gm?.chatModel?.chatStartMetadata?.contextWindowMetadata;
+        const rawMax = cw?.maxContextTokens;
+        const maxTokens = (rawMax !== undefined && rawMax !== null) ? Number(rawMax) : NaN;
+        if (Number.isSafeInteger(maxTokens) && maxTokens > 0) {
+          latestRuntimeLimit = maxTokens;
+          latestRuntimeModel = gmModel || planModel;
+          const canonical = gmModel || planModel;
+          if (gmModel) {
+            registerDynamicModelToken(gmModel, gmModel);
+            registerDynamicModelLimit(gmModel, maxTokens);
+          }
+          if (displayName) {
+            registerDynamicModelToken(displayName, canonical || displayName);
+            registerDynamicModelLimit(displayName, maxTokens);
+          }
+          if (responseModel) {
+            registerDynamicModelToken(responseModel, canonical || responseModel);
+            registerDynamicModelLimit(responseModel, maxTokens);
+          }
+          if (planModel && (!gmModel || isSameModelFamily(planModel, gmModel, dynamicModelCatalog.aliases))) {
+            registerDynamicModelToken(planModel, planModel);
+            registerDynamicModelLimit(planModel, maxTokens);
+            if (modelName) {
+              registerDynamicModelToken(modelName, planModel);
+              registerDynamicModelLimit(modelName, maxTokens);
+            }
+          }
+        }
+
+        if (planModel) {
+          syntheticSteps.push({
+            type: 'CORTEX_STEP_TYPE_USER_INPUT',
+            stepIndex: seqIdx++,
+            userInput: {
+              userResponse: '',
+              userConfig: { plannerConfig: { planModel } }
+            }
+          });
+        }
+
+        const usage = gm?.chatModel?.usage;
+        const hasUsageTokens = usage && typeof usage === 'object' && (
+          Number(usage.inputTokens) > 0 ||
+          Number(usage.cacheReadTokens) > 0 ||
+          Number(usage.cacheCreationTokens) > 0 ||
+          Number(usage.outputTokens) > 0
+        );
+        if (hasUsageTokens) {
+          syntheticSteps.push({
+            type: 'CORTEX_STEP_TYPE_PLANNER_RESPONSE',
+            stepIndex: seqIdx++,
+            metadata: {
+              generatorModel: gmModel || planModel,
+              modelUsage: usage
+            }
+          });
+        } else {
+          const estUsed = Number(cw?.estimatedTokensUsed);
+          if (Number.isFinite(estUsed) && estUsed > 0) {
+            syntheticSteps.push({
+              type: 'CORTEX_STEP_TYPE_PLANNER_RESPONSE',
+              stepIndex: seqIdx++,
+              metadata: {
+                generatorModel: gmModel || planModel,
+                modelUsage: {
+                  model: gmModel || planModel,
+                  inputTokens: estUsed,
+                  outputTokens: 0,
+                  cacheReadTokens: 0,
+                  cacheCreationTokens: 0
+                }
+              }
+            });
+          }
+        }
+      }
+
+      if (syntheticSteps.length === 0) {
+        return formatContextResult({ ready: false });
+      }
+      if (numTotalSteps > 0) {
+        const lastStep = syntheticSteps[syntheticSteps.length - 1];
+        lastStep.stepIndex = Math.max(lastStep.stepIndex, numTotalSteps - 1);
+      }
+
+      const calcOptions = {
+        ...options,
+        dynamicKnownModels: options.dynamicKnownModels || dynamicModelCatalog.models,
+        dynamicModelAliases: options.dynamicModelAliases || dynamicModelCatalog.aliases,
+        dynamicModelLimits: options.dynamicModelLimits || dynamicModelCatalog.limits,
+        runtimeMaxContextTokens: latestRuntimeLimit,
+        runtimeContextModel: latestRuntimeModel,
+        isTruncated: false,
+        isWindowed: false,
+        totalSteps: numTotalSteps || syntheticSteps.length,
+        windowStartStep: 0,
+        initialCompressionDetected: false,
+        initialCompressionDrop: 0,
+      };
+      const calc = processTrajectorySteps(syntheticSteps, calcOptions);
+      await resolveDynamicModelState(calc, lsRef, rpcCaller, calcOptions);
+      const result = formatContextResult(calc);
+      if (result && result.ready) {
+        result.cid = targetCascadeId;
+        result.conversationId = targetCascadeId;
+        markOversizedTrajectory(resolvedNormCid);
+        setBackendCachedSnapshot(resolvedNormCid, result, Date.now(), modelSig);
+        setSessionLsBinding(resolvedNormCid, lsRef.current);
+      }
+      return result;
+    };
+
+    if (oversizedTrajectories.has(resolvedNormCid)) {
+      return await fetchOversizedTrajectoryFallback();
+    }
+
     // 全量拉取执行器（冷启动或增量守卫失效回退时调用）
     const executeFullFetch = async () => {
       const seenStepKeys = new Set();
@@ -981,6 +1173,9 @@ export async function getContextSnapshot(conversationId = null, force = false, o
               needsFallback = true;
             }
           } catch (fetchErr) {
+            if (isResponseTooLargeError(fetchErr)) {
+              return await fetchOversizedTrajectoryFallback();
+            }
             if (is404RpcError(fetchErr) || isRetryableRpcError(fetchErr)) {
               needsFallback = true;
             } else {
@@ -1027,7 +1222,14 @@ export async function getContextSnapshot(conversationId = null, force = false, o
             }
           }
         } else {
-          pageSteps = await fetchPage(startIndex);
+          try {
+            pageSteps = await fetchPage(startIndex);
+          } catch (fetchErr) {
+            if (isResponseTooLargeError(fetchErr)) {
+              return await fetchOversizedTrajectoryFallback();
+            }
+            throw fetchErr;
+          }
         }
 
         if (pageSteps.length === 0) break;
@@ -1481,6 +1683,7 @@ export function _getMemoryCacheInfo() {
     clear: () => {
       memoryCache.clear();
       trajectoryCache.clear();
+      oversizedTrajectories.clear();
       sessionLsBindings.clear();
       clearDynamicModelCatalog();
       lastAltLsForceRescanAt = 0;

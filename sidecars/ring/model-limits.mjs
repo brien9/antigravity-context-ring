@@ -13,9 +13,10 @@ export const PLATFORM_CONTEXT_LIMITS = {
   'MODEL_PLACEHOLDER_M432': 512_000, // Canonical Hydrogen
   'MODEL_PLACEHOLDER_M433': 512_000, // Canonical Hydrogen
   'MODEL_PLACEHOLDER_M434': 512_000, // Canonical Hydrogen
-  // Orchestrator (Argon) (512K - 随 Argon 家族翻倍)
-  'MODEL_PLACEHOLDER_M667': 512_000, // Canonical Orchestrator (Argon)
-  'MODEL_PLACEHOLDER_M668': 512_000, // Orchestrator (Argon) (gemini-pro-orchestrator-g1-pro)
+  // Orchestrator 系列 (512K - 随 Gemini 4 家族对齐)
+  'MODEL_PLACEHOLDER_M667': 512_000, // Orchestrator (Carbon) (gemini-pro-orchestrator)
+  'MODEL_PLACEHOLDER_M668': 512_000, // Legacy Orchestrator (Argon) (gemini-pro-orchestrator-g1-pro)
+  'MODEL_PLACEHOLDER_M681': 512_000, // Orchestrator (Argon) (gemini-pro-orchestrator-argon)
   // Gemini 4 Neon (512K - 2026-11 Antigravity v2.33 新增主力旗舰系列)
   'MODEL_PLACEHOLDER_M530': 512_000,
   'MODEL_PLACEHOLDER_M531': 512_000,
@@ -28,7 +29,7 @@ export const PLATFORM_CONTEXT_LIMITS = {
   'MODEL_PLACEHOLDER_M537': 512_000, // Orchestrator (Neon) (gemini-pro-orchestrator-neon)
   // Gemini 4 Carbon (512K - 2026-11 Antigravity 平台侧翻倍放开)
   'MODEL_PLACEHOLDER_M670': 512_000, // Gemini 4 Carbon (gemini-4-carbon)
-  // 内部 M408 家族 (归属 Gemini 4 Argon 族，512K)
+  // 内部 M408 家族 (归属 Gemini 4 Argon 族，512K；其中 M427/M437/M438 为 Gemini 4 Carbon 档位)
   'MODEL_PLACEHOLDER_M408': 512_000,
   'MODEL_PLACEHOLDER_M409': 512_000,
   'MODEL_PLACEHOLDER_M410': 512_000,
@@ -40,13 +41,13 @@ export const PLATFORM_CONTEXT_LIMITS = {
   'MODEL_PLACEHOLDER_M422': 512_000,
   'MODEL_PLACEHOLDER_M423': 512_000,
   'MODEL_PLACEHOLDER_M424': 512_000,
-  'MODEL_PLACEHOLDER_M427': 512_000,
+  'MODEL_PLACEHOLDER_M427': 512_000, // Gemini 4 Carbon (High) (gemini-4-carbon-high)
   'MODEL_PLACEHOLDER_M428': 512_000,
   'MODEL_PLACEHOLDER_M429': 512_000,
   'MODEL_PLACEHOLDER_M430': 512_000,
   'MODEL_PLACEHOLDER_M431': 512_000,
-  'MODEL_PLACEHOLDER_M437': 512_000,
-  'MODEL_PLACEHOLDER_M438': 512_000,
+  'MODEL_PLACEHOLDER_M437': 512_000, // Gemini 4 Carbon (Medium) (gemini-4-carbon-medium)
+  'MODEL_PLACEHOLDER_M438': 512_000, // Gemini 4 Carbon (Low) (gemini-4-carbon-low)
   // Gemini 3.8 Flash (256K)
   'MODEL_PLACEHOLDER_M317': 256_000,
   'MODEL_PLACEHOLDER_M318': 256_000, // High (gemini-3.8-flash-high)
@@ -127,8 +128,11 @@ export const MODEL_ID_ALIASES = {
   'gemini-4-neon-xhigh': 'MODEL_PLACEHOLDER_M535',
   'gemini-4-neon-extra': 'MODEL_PLACEHOLDER_M535',
   'gemini-4-neon-trial': 'MODEL_PLACEHOLDER_M533',
-  'orchestrator': 'MODEL_PLACEHOLDER_M668',
-  'orchestrator-argon': 'MODEL_PLACEHOLDER_M668',
+  'orchestrator': 'MODEL_PLACEHOLDER_M667',
+  'gemini-pro-orchestrator': 'MODEL_PLACEHOLDER_M667',
+  'orchestrator-carbon': 'MODEL_PLACEHOLDER_M667',
+  'orchestrator-argon': 'MODEL_PLACEHOLDER_M681',
+  'gemini-pro-orchestrator-argon': 'MODEL_PLACEHOLDER_M681',
   'gemini-pro-orchestrator-g1-pro': 'MODEL_PLACEHOLDER_M668',
   'orchestrator-neon': 'MODEL_PLACEHOLDER_M537',
   'gemini-pro-orchestrator-neon': 'MODEL_PLACEHOLDER_M537',
@@ -138,32 +142,32 @@ export const MODEL_ID_ALIASES = {
   'orchestrator-gemini-4-neon-low': 'MODEL_PLACEHOLDER_M537',
   'orchestrator-gemini-4-neon-xhigh': 'MODEL_PLACEHOLDER_M537',
   'orchestrator-gemini-4-neon-extra': 'MODEL_PLACEHOLDER_M537',
-  'orchestrator-gemini-4-argon': 'MODEL_PLACEHOLDER_M668',
-  'orchestrator-gemini-4-argon-high': 'MODEL_PLACEHOLDER_M668',
-  'orchestrator-gemini-4-argon-medium': 'MODEL_PLACEHOLDER_M668',
-  'orchestrator-gemini-4-argon-low': 'MODEL_PLACEHOLDER_M668',
-  'orchestrator-gemini-4-argon-xhigh': 'MODEL_PLACEHOLDER_M668',
-  'orchestrator-gemini-4-argon-extra': 'MODEL_PLACEHOLDER_M668',
+  'orchestrator-gemini-4-argon': 'MODEL_PLACEHOLDER_M681',
+  'orchestrator-gemini-4-argon-high': 'MODEL_PLACEHOLDER_M681',
+  'orchestrator-gemini-4-argon-medium': 'MODEL_PLACEHOLDER_M681',
+  'orchestrator-gemini-4-argon-low': 'MODEL_PLACEHOLDER_M681',
+  'orchestrator-gemini-4-argon-xhigh': 'MODEL_PLACEHOLDER_M681',
+  'orchestrator-gemini-4-argon-extra': 'MODEL_PLACEHOLDER_M681',
   'orchestrator-gemini-4-hydrogen': 'MODEL_PLACEHOLDER_M537',
   'orchestrator-gemini-4-hydrogen-high': 'MODEL_PLACEHOLDER_M537',
   'orchestrator-gemini-4-hydrogen-medium': 'MODEL_PLACEHOLDER_M537',
   'orchestrator-gemini-4-hydrogen-low': 'MODEL_PLACEHOLDER_M537',
   'orchestrator-gemini-4-hydrogen-xhigh': 'MODEL_PLACEHOLDER_M537',
   'orchestrator-gemini-4-hydrogen-extra': 'MODEL_PLACEHOLDER_M537',
-  'orchestrator-gemini-4-carbon': 'MODEL_PLACEHOLDER_M537',
-  'orchestrator-gemini-4-carbon-high': 'MODEL_PLACEHOLDER_M537',
-  'orchestrator-gemini-4-carbon-medium': 'MODEL_PLACEHOLDER_M537',
-  'orchestrator-gemini-4-carbon-low': 'MODEL_PLACEHOLDER_M537',
-  'orchestrator-gemini-4-carbon-xhigh': 'MODEL_PLACEHOLDER_M537',
-  'orchestrator-gemini-4-carbon-extra': 'MODEL_PLACEHOLDER_M537',
+  'orchestrator-gemini-4-carbon': 'MODEL_PLACEHOLDER_M667',
+  'orchestrator-gemini-4-carbon-high': 'MODEL_PLACEHOLDER_M667',
+  'orchestrator-gemini-4-carbon-medium': 'MODEL_PLACEHOLDER_M667',
+  'orchestrator-gemini-4-carbon-low': 'MODEL_PLACEHOLDER_M667',
+  'orchestrator-gemini-4-carbon-xhigh': 'MODEL_PLACEHOLDER_M667',
+  'orchestrator-gemini-4-carbon-extra': 'MODEL_PLACEHOLDER_M667',
   'gemini-flash-worker-agy': 'MODEL_PLACEHOLDER_M669',
   'gemini-flash': 'MODEL_PLACEHOLDER_M669',
-  'gemini-4-carbon': 'MODEL_PLACEHOLDER_M670',
-  'gemini-4-carbon-low': 'MODEL_PLACEHOLDER_M670',
-  'gemini-4-carbon-medium': 'MODEL_PLACEHOLDER_M670',
-  'gemini-4-carbon-high': 'MODEL_PLACEHOLDER_M670',
-  'gemini-4-carbon-xhigh': 'MODEL_PLACEHOLDER_M670',
-  'gemini-4-carbon-extra': 'MODEL_PLACEHOLDER_M670',
+  'gemini-4-carbon': 'MODEL_PLACEHOLDER_M437',
+  'gemini-4-carbon-low': 'MODEL_PLACEHOLDER_M438',
+  'gemini-4-carbon-medium': 'MODEL_PLACEHOLDER_M437',
+  'gemini-4-carbon-high': 'MODEL_PLACEHOLDER_M427',
+  'gemini-4-carbon-xhigh': 'MODEL_PLACEHOLDER_M427',
+  'gemini-4-carbon-extra': 'MODEL_PLACEHOLDER_M427',
   'gemini-4-carbon-disabled': 'MODEL_PLACEHOLDER_M670',
   'gemini-3.8-flash': 'MODEL_PLACEHOLDER_M319',
   'gemini-3.8-flash-high': 'MODEL_PLACEHOLDER_M318',
@@ -331,11 +335,11 @@ export function resolveStaticCanonicalKey(modelId = '') {
   }
   if (norm && norm.startsWith('orchestrator-')) {
     const subModel = norm.slice('orchestrator-'.length);
-    if (subModel.includes('argon')) return 'MODEL_PLACEHOLDER_M668';
+    if (subModel.includes('argon')) return 'MODEL_PLACEHOLDER_M681';
+    if (subModel.includes('carbon')) return 'MODEL_PLACEHOLDER_M667';
     if (
       subModel.includes('neon') ||
       subModel.includes('hydrogen') ||
-      subModel.includes('carbon') ||
       subModel.includes('gemini-4')
     ) {
       return 'MODEL_PLACEHOLDER_M537';
@@ -509,7 +513,7 @@ export function resolveModelFamilyKey(modelId = '', dynamicAliases = null) {
   const norm = normalizeModelLookupKey(canonical || cleanId);
   if (!norm) return '';
 
-  if (/(?:^|-)m(?:66[78]|537)(?=$|-)/.test(norm) || rawNorm.includes('orchestrator') || norm.includes('orchestrator')) {
+  if (/(?:^|-)m(?:66[78]|681|537)(?=$|-)/.test(norm) || rawNorm.includes('orchestrator') || norm.includes('orchestrator')) {
     return 'FAMILY_ORCHESTRATOR';
   }
   if (/(?:^|-)m(?:52[5-9]|43[2-4])(?=$|-)/.test(norm) || norm.includes('hydrogen')) {
@@ -518,10 +522,10 @@ export function resolveModelFamilyKey(modelId = '', dynamicAliases = null) {
   if (/(?:^|-)m53[0-6](?=$|-)/.test(norm) || norm.includes('neon')) {
     return 'FAMILY_NEON';
   }
-  if (/(?:^|-)m(?:41[7-9]|40[89]|41[0-3]|42[0-9]|43[01]|43[78])(?=$|-)/.test(norm) || norm.includes('argon')) {
+  if (/(?:^|-)m(?:41[7-9]|40[89]|41[0-3]|42[0-4]|42[89]|43[01])(?=$|-)/.test(norm) || norm.includes('argon')) {
     return 'FAMILY_ARGON';
   }
-  if (/(?:^|-)m670(?=$|-)/.test(norm) || norm.includes('carbon')) {
+  if (/(?:^|-)m(?:670|427|43[78])(?=$|-)/.test(norm) || norm.includes('carbon')) {
     return 'FAMILY_CARBON';
   }
   if (
@@ -585,9 +589,12 @@ function isOrchestratorExecutionPartner(modelId = '', dynamicAliases = null) {
   const clean = modelId.trim();
   if (!clean) return false;
   const canonical = resolveCanonicalKey(clean, dynamicAliases);
-  if (canonical === 'MODEL_PLACEHOLDER_M669') return true;
+  if (canonical === 'MODEL_PLACEHOLDER_M669' || canonical === 'MODEL_PLACEHOLDER_M525') return true;
   const norm = normalizeModelLookupKey(canonical || clean);
-  return /(?:^|-)m669(?=$|-)/.test(norm) || norm === 'gemini-flash-worker-agy' || norm === 'gemini-flash';
+  return /(?:^|-)m(?:669|525)(?=$|-)/.test(norm) ||
+    norm === 'gemini-flash-worker-agy' ||
+    norm === 'gemini-flash' ||
+    norm === 'gemini-4-hydrogen-high';
 }
 
 /**
